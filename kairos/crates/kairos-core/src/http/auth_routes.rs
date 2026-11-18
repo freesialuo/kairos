@@ -30,7 +30,7 @@ use super::{Method, Request, Response};
 
 const USER_ID_META_KEY: &str = "webauthn_user_id";
 
-pub(crate) fn route<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Response, CoreError> {
+pub(crate) async fn route<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Response, CoreError> {
     check_origin(req, &hub.config.origin)?;
     let mut response = match (req.method, req.path.as_str()) {
         (Method::Get, "/auth/state") => auth_state(hub, req)?,
@@ -52,6 +52,9 @@ pub(crate) fn route<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Response, C
         }
         _ => return Err(CoreError::NotFound),
     };
+    if req.method == Method::Post {
+        hub.rearm(crate::sched::alarm::Floor::Http).await?;
+    }
     response
         .headers
         .push(("Cache-Control".into(), "no-store".into()));

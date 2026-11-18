@@ -224,3 +224,19 @@ async fn challenge_replay_rejected() {
     assert_eq!(replay.status, 401);
     assert_eq!(replay.cookie("__Host-chal"), Some("__Host-chal="));
 }
+
+#[tokio::test]
+async fn successful_recovery_arms_background_maintenance() {
+    let hub = TestHub::new();
+    assert_eq!(hub.alarm_at(), None);
+    let response = hub
+        .request(
+            "POST",
+            "/auth/recovery",
+            Some(json!({"code":"correct horse"})),
+            &[],
+        )
+        .await;
+    assert_eq!(response.status, 200);
+    assert!(hub.alarm_at().is_some());
+}

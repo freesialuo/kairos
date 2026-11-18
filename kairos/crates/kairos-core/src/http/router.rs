@@ -25,7 +25,7 @@ impl<P: Ports> Hub<P> {
     }
     async fn route(&self, req: Request) -> Result<Response, CoreError> {
         if req.path.starts_with("/auth/") {
-            return super::auth_routes::route(self, &req);
+            return super::auth_routes::route(self, &req).await;
         }
         if req.path.starts_with("/api/v1/") {
             return super::api_v1::route(self, &req).await;
