@@ -3,7 +3,7 @@ main = "build/worker/shim.mjs"
 compatibility_date = "2026-11-01"
 
 [build]
-command = "cargo install -q --locked --version 0.9.0 worker-build && worker-build --release --panic-unwind --out-dir ../../build crates/kairos-worker"
+command = "node scripts/build-worker.mjs"
 
 [assets]
 directory = "crates/kairos-web/dist"
