@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kairos-types", "crates/kairos-core", "crates/kairos-testkit", "xtask"]
+members = ["crates/kairos-types", "crates/kairos-core", "crates/kairos-testkit", "crates/kairos-worker", "crates/e2e", "xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -19,3 +19,7 @@ lto = true
 codegen-units = 1
 strip = true
 overflow-checks = true
+
+# wasm-bindgen needs the Wasm feature and stack metadata to wire panic recovery.
+[profile.release.package.kairos-worker]
+strip = "debuginfo"

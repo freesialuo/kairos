@@ -24,6 +24,10 @@ impl<P: Ports> Hub<P> {
         }
     }
     async fn route(&self, req: Request) -> Result<Response, CoreError> {
+        #[cfg(feature = "test-hooks")]
+        if self.config.allow_http_urls && req.path.starts_with("/__test/adapter/") {
+            return super::internal::adapter(self, &req).await;
+        }
         let router = ROUTES
             .as_ref()
             .map_err(|error| CoreError::Internal(error.to_string()))?;

@@ -1,3 +1,5 @@
+#[cfg(feature = "test-hooks")]
+mod internal;
 pub mod router;
 
 use crate::CoreError;

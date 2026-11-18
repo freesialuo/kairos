@@ -1,5 +1,5 @@
 use kairos_core::{
-    DbError, NetError,
+    CoreError, DbError, NetError,
     ports::{Alarm, Clock, Commit, Entropy, Http, OutRequest, OutResponse},
 };
 use std::{
@@ -15,6 +15,7 @@ struct FaultState {
     panic: Option<String>,
     kill: Option<String>,
     halt: bool,
+    commit_error: bool,
 }
 
 /// Faults persist until replaced. A simulated kill affects only the next I/O
@@ -30,6 +31,9 @@ impl Faults {
     }
     pub fn kill_after_sql_matching(&self, s: &str) {
         self.0.borrow_mut().kill = Some(s.into());
+    }
+    pub fn fail_next_commit(&self) {
+        self.0.borrow_mut().commit_error = true;
     }
     pub(crate) fn before_sql(&self, sql: &str) -> Result<(), DbError> {
         let state = self.0.borrow();
@@ -85,18 +89,25 @@ pub struct FakeAlarm {
     pub(crate) calls: Cell<usize>,
 }
 impl Alarm for FakeAlarm {
-    async fn get(&self) -> Option<i64> {
-        self.at.get()
+    async fn get(&self) -> Result<Option<i64>, CoreError> {
+        Ok(self.at.get())
     }
-    async fn set(&self, at_ms: i64) {
+    async fn set(&self, at_ms: i64) -> Result<(), CoreError> {
         self.at.set(Some(at_ms));
         self.calls.set(self.calls.get() + 1);
+        Ok(())
     }
 }
 pub struct FakeCommit(pub(crate) Faults);
 impl Commit for FakeCommit {
-    async fn commit_point(&self) {
+    async fn commit_point(&self) -> Result<(), CoreError> {
         self.0.boundary().await;
+        let Faults(state) = &self.0;
+        if std::mem::take(&mut state.borrow_mut().commit_error) {
+            Err(DbError("injected commit failure".into()).into())
+        } else {
+            Ok(())
+        }
     }
 }
 

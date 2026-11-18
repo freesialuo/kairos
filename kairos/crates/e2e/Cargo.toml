@@ -1,0 +1,21 @@
+[package]
+name = "e2e"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+
+[dependencies]
+axum = "0.8"
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
+
+[[test]]
+name = "adapters"
+required-features = ["wrangler"]
+
+[features]
+wrangler = []

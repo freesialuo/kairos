@@ -99,11 +99,11 @@ pub trait Http {
     async fn send(&self, req: OutRequest) -> Result<OutResponse, NetError>;
 }
 pub trait Alarm {
-    async fn get(&self) -> Option<i64>;
-    async fn set(&self, at_ms: i64);
+    async fn get(&self) -> Result<Option<i64>, CoreError>;
+    async fn set(&self, at_ms: i64) -> Result<(), CoreError>;
 }
 pub trait Commit {
-    async fn commit_point(&self);
+    async fn commit_point(&self) -> Result<(), CoreError>;
 }
 pub trait Ports {
     type Db: Db;
