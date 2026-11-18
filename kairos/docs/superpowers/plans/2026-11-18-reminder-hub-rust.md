@@ -1,4 +1,4 @@
-# Personal Reminder Hub (all-Rust) Implementation Plan
+# Kairos (all-Rust) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -6,7 +6,7 @@
 
 **Goal:** Build the single-user reminder hub specified in the design (ICS feeds + API + manual events → Bark reminders from a self-arming Durable Object alarm, passkey-protected web UI) entirely in Rust on Cloudflare Workers.
 
-**Architecture:** A Cargo workspace. `hub-core` holds every behaviour (domain, scheduling, sync, auth, WebAuthn verification, HTTP routing) behind ports for DB, clock, entropy, HTTP, alarm and commit, so it is tested natively on `rusqlite` through `hub-testkit`. `hub-worker` is a thin `workers-rs` layer: an entry Worker that forwards `/api/*` and `/auth/*` to one SQLite-backed Durable Object `Hub`, plus adapters that implement the ports. `hub-web` is a Leptos client-side app served as static assets; `hub-types` holds the DTOs shared by all of them.
+**Architecture:** A Cargo workspace. `kairos-core` holds every behaviour (domain, scheduling, sync, auth, WebAuthn verification, HTTP routing) behind ports for DB, clock, entropy, HTTP, alarm and commit, so it is tested natively on `rusqlite` through `kairos-testkit`. `kairos-worker` is a thin `workers-rs` layer: an entry Worker that forwards `/api/*` and `/auth/*` to one SQLite-backed Durable Object `Hub`, plus adapters that implement the ports. `kairos-web` is a Leptos client-side app served as static assets; `kairos-types` holds the DTOs shared by all of them.
 
 **Tech Stack:** Rust (stable, plus a pinned nightly for `worker-build --panic-unwind`), `worker` (workers-rs), `wasm-bindgen`, `matchit`, `serde`/`serde_json`, `ical`, `rrule`, `jiff`, `sha2`/`hmac`/`subtle`, `getrandom`, `ciborium`/`coset`, `p256`/`ed25519-dalek`/`rsa`, `base64`, Leptos + `leptos_router` + `gloo-net` + Trunk, `rusqlite` (bundled), `proptest`, `wasm-bindgen-test`, `chromiumoxide`, `tokio`/`axum` (test servers only), Wrangler.
 
@@ -14,13 +14,13 @@
 
 ## Global Constraints
 
-- **Paths** are relative to `cf-reminder-calendar/` (the git repository root is its parent, `CodeSpace/`).
+- **Paths** are relative to `kairos/` (the git repository root is its parent, `CodeSpace/`).
 - **Safe file disposal:** never delete with `rm`, `rmdir`, `unlink`, `git clean`, `find -delete`, or programmatic unlink (`std::fs::remove_*` included). Move removed files to Trash (`trash <path>` or `mv <path> ~/.Trash/`).
-- **All application code is Rust.** The only hand-written non-Rust files are `crates/hub-web/boot.js` (exact content in Task 15), `crates/hub-web/_headers`, `crates/hub-web/index.html`, `crates/hub-web/style.css`, `wrangler.toml`, and Cargo/Trunk/toolchain config.
+- **All application code is Rust.** The only hand-written non-Rust files are `crates/kairos-web/boot.js` (exact content in Task 15), `crates/kairos-web/_headers`, `crates/kairos-web/index.html`, `crates/kairos-web/style.css`, `wrangler.toml`, and Cargo/Trunk/toolchain config.
 - **Free plan:** ≤ 10 ms CPU and ≤ 50 subrequests per invocation; no KV, no D1; exactly one Cron Trigger (`0 */6 * * *`, the watchdog, §7.8).
 - **Singleton:** exactly one Durable Object instance, `HUB` → `id_from_name("main")`, class `Hub`, migration `v1` `new_sqlite_classes = ["Hub"]`.
-- **No wall clock, no panics in production code:** time only from the `Clock` port; `clippy::unwrap_used`, `expect_used`, `panic`, `indexing_slicing` denied outside tests; `clippy::disallowed_methods` lists `std::time::SystemTime::now`, `std::time::Instant::now`, `jiff::Timestamp::now`, `chrono::Utc::now`, `chrono::Local::now` (configured in `clippy.toml`, Task 1). `inner_html` is banned in `hub-web` (Task 15 adds the check).
-- **Release profile:** `lto = true`, `codegen-units = 1`, `strip = true`, `overflow-checks = true`, `opt-level = "z"` for `hub-web` only.
+- **No wall clock, no panics in production code:** time only from the `Clock` port; `clippy::unwrap_used`, `expect_used`, `panic`, `indexing_slicing` denied outside tests; `clippy::disallowed_methods` lists `std::time::SystemTime::now`, `std::time::Instant::now`, `jiff::Timestamp::now`, `chrono::Utc::now`, `chrono::Local::now` (configured in `clippy.toml`, Task 1). `inner_html` is banned in `kairos-web` (Task 15 adds the check).
+- **Release profile:** `lto = true`, `codegen-units = 1`, `strip = true`, `overflow-checks = true`, `opt-level = "z"` for `kairos-web` only.
 - **Time representation:** instants are UTC epoch milliseconds (`i64`); wall-clock strings are `YYYY-MM-DDTHH:mm:ss` (timed) or `YYYY-MM-DD` (all-day).
 - **Spec constants (do not alter):**
   - reminder window **60 days**; `deliveries` and finished `reminders` retention **90 days**;
@@ -36,7 +36,7 @@
 - **Every state-changing HTTP route ends with `hub.rearm(Floor::Http)`**; `run_alarm` always re-arms (`Floor::AlarmClean` or `Floor::AlarmError`).
 - **Cursor rule:** `Db::exec` returns materialised rows; never hold SQL state across an `await`. Transactions (`Db::transaction`) contain no `await` (enforced by the synchronous closure).
 - **Untrusted text** (feed and event fields) is rendered as text only; CSP per §13.2.
-- **UI copy** in English, in `crates/hub-web/src/strings.rs`.
+- **UI copy** in English, in `crates/kairos-web/src/strings.rs`.
 - **Dependencies:** add with `cargo add` (latest release at the time of the task); never below these floors: `worker` 0.8.7, `rrule` 0.14, `ical` 0.11, `jiff` 0.2, `matchit` 0.8, `serde_json` 1, `getrandom` 0.3, `base64` 0.22, `ciborium` 0.2. Commit `Cargo.lock`.
 - **Commits:** one per task (more is fine), Conventional Commits, no attribution lines.
 
@@ -53,7 +53,7 @@
 ## File Structure
 
 ```
-cf-reminder-calendar/
+kairos/
   Cargo.toml                 workspace (members below), shared [profile.release], [workspace.lints]
   rust-toolchain.toml        stable channel + wasm32-unknown-unknown target
   clippy.toml                disallowed-methods list
@@ -63,9 +63,9 @@ cf-reminder-calendar/
   docs/rust-on-workers-notes.md   experiment log (§20)
   xtask/src/main.rs          cargo xtask build | test | e2e | deploy
   crates/
-    hub-types/src/
+    kairos-types/src/
       lib.rs  api_v1.rs  admin.rs  auth.rs  repeat.rs  limits.rs
-    hub-core/src/
+    kairos-core/src/
       lib.rs                 Hub<P>, re-exports
       ports.rs               Value, Row, Db, Clock, Entropy, Http, Alarm, Commit, Ports, OutRequest/OutResponse
       error.rs               CoreError, DbError, NetError
@@ -96,17 +96,17 @@ cf-reminder-calendar/
       auth/crypto.rs  auth/cookies.rs  auth/session.rs  auth/csrf.rs  auth/recovery.rs  auth/challenge.rs  auth/tokens.rs
       webauthn/mod.rs  webauthn/authdata.rs  webauthn/cose.rs  webauthn/verify.rs  webauthn/options.rs
       export.rs              export JSON / ICS
-    hub-testkit/
+    kairos-testkit/
       src/lib.rs             TestHub, TestPorts, FakeClock, FakeHttp, FakeAlarm, SeededEntropy, SqliteDb, fixtures helpers
       src/authenticator.rs   software WebAuthn authenticator (ES256, EdDSA, RS256)
       tests/*.rs             all Hub integration tests (one file per task area)
       fixtures/*.ics
-    hub-worker/src/
+    kairos-worker/src/
       lib.rs                 #[event(fetch)], #[event(scheduled)]
       hub_do.rs              #[durable_object] Hub
-      convert.rs             worker::Request/Response ↔ hub_core::http
+      convert.rs             worker::Request/Response ↔ kairos_core::http
       adapters/{db.rs, raw_storage.rs, clock.rs, entropy.rs, http.rs, alarm.rs, commit.rs, mod.rs}
-    hub-web/
+    kairos-web/
       index.html  boot.js  _headers  style.css  Trunk.toml
       src/{main.rs, app.rs, api.rs, passkey.rs, b64.rs, strings.rs, calendar_grid.rs, pages/*.rs, components/*.rs}
     e2e/
@@ -115,9 +115,9 @@ cf-reminder-calendar/
       tests/smoke.rs         browser end-to-end
 ```
 
-**Why `hub-testkit` is a separate crate:** integration tests need `rusqlite` and fakes that implement `hub-core`'s ports. Putting them in `hub-core/tests` would need a dev-dependency cycle (two copies of `hub-core` types). `hub-testkit` depends on `hub-core`, and the integration tests live in `hub-testkit/tests/`. Pure unit tests stay inside `hub-core` modules (`#[cfg(test)] mod tests`).
+**Why `kairos-testkit` is a separate crate:** integration tests need `rusqlite` and fakes that implement `kairos-core`'s ports. Putting them in `kairos-core/tests` would need a dev-dependency cycle (two copies of `kairos-core` types). `kairos-testkit` depends on `kairos-core`, and the integration tests live in `kairos-testkit/tests/`. Pure unit tests stay inside `kairos-core` modules (`#[cfg(test)] mod tests`).
 
-**Pure-module tests on wasm32:** each `#[cfg(test)] mod tests` in `hub-core/src/{time,ics,calendar/plan.rs,notify/message.rs,webauthn,auth/crypto.rs}` starts with `#[cfg(target_arch = "wasm32")] use wasm_bindgen_test::wasm_bindgen_test as test;` so `cargo xtask test` can also run them under `wasm-bindgen-test-runner` (Node).
+**Pure-module tests on wasm32:** each `#[cfg(test)] mod tests` in `kairos-core/src/{time,ics,calendar/plan.rs,notify/message.rs,webauthn,auth/crypto.rs}` starts with `#[cfg(target_arch = "wasm32")] use wasm_bindgen_test::wasm_bindgen_test as test;` so `cargo xtask test` can also run them under `wasm-bindgen-test-runner` (Node).
 
 ### Shared core types (created in Task 1 unless noted; every task uses these names)
 
@@ -213,19 +213,19 @@ pub struct Occurrence {
 
 Identity keys (§6.1): `series_key` = `ics:<sourceId>:<uid>` | `api:<externalId>` | `manual:<eventId>`; `occ_key` = `<series_key>|<slot>` (`slot` = original wall-clock start, or `single`); reminder `key` = `<occ_key>|<leadMin>` or `<occ_key>|allday`.
 
-### Test harness (`hub-testkit`, Task 1; extended where noted)
+### Test harness (`kairos-testkit`, Task 1; extended where noted)
 
 ```rust
 pub const NOW: &str = "2026-11-20T08:00:00Z";
 pub fn ms(iso: &str) -> i64;                       // RFC 3339 → epoch ms (via jiff)
 pub struct TestHub { pub hub: Hub<TestPorts> }     // Deref to Hub
 impl TestHub {
-    pub fn new() -> TestHub;                       // in-memory rusqlite, migrated, clock at NOW, origin "https://hub.test", rp_id "hub.test", recovery code "correct horse"
+    pub fn new() -> TestHub;                       // in-memory rusqlite, migrated, clock at NOW, origin "https://kairos.test", rp_id "kairos.test", recovery code "correct horse"
     pub fn set_now(&self, iso: &str);  pub fn advance_min(&self, minutes: i64);
     pub fn http(&self) -> &FakeHttp;               // script responses by URL prefix; records requests
     pub fn alarm_at(&self) -> Option<i64>;  pub fn set_alarm_calls(&self) -> usize;
     pub fn sql(&self, q: &str) -> Vec<Row>;        // test-only raw query
-    pub async fn request(&self, method: &str, path: &str, body: Option<serde_json::Value>, cookies: &[&str]) -> TestResponse;  // adds Origin: https://hub.test
+    pub async fn request(&self, method: &str, path: &str, body: Option<serde_json::Value>, cookies: &[&str]) -> TestResponse;  // adds Origin: https://kairos.test
     pub async fn admin_session(&self) -> String;   // Task 12: full session cookie without a browser (registers a key via the software authenticator)
 }
 pub struct FakeHttp;  impl FakeHttp {
@@ -247,13 +247,13 @@ pub struct FakeHttp;  impl FakeHttp {
 ### Task 1: Workspace, ports, schema, and the core router
 
 **Files:**
-- Create: `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, `.gitignore` (`target/`, `crates/hub-web/dist/`, `build/`, `.wrangler/`), `crates/hub-types/src/lib.rs`, `crates/hub-core/src/{lib.rs, ports.rs, error.rs, config.rs, db/schema.rs, db/settings.rs, http/mod.rs, http/router.rs, calendar/model.rs, sched/alarm.rs}`, `crates/hub-testkit/src/lib.rs`, `crates/hub-testkit/tests/foundation.rs`, `xtask/src/main.rs`
-- Test: `crates/hub-testkit/tests/foundation.rs`
+- Create: `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, `.gitignore` (`target/`, `crates/kairos-web/dist/`, `build/`, `.wrangler/`), `crates/kairos-types/src/lib.rs`, `crates/kairos-core/src/{lib.rs, ports.rs, error.rs, config.rs, db/schema.rs, db/settings.rs, http/mod.rs, http/router.rs, calendar/model.rs, sched/alarm.rs}`, `crates/kairos-testkit/src/lib.rs`, `crates/kairos-testkit/tests/foundation.rs`, `xtask/src/main.rs`
+- Test: `crates/kairos-testkit/tests/foundation.rs`
 
 **Interfaces:**
 - Produces: everything in "Shared core types" and "Test harness" above; `MIGRATIONS: &[&str]` (migration 1 = **exactly** the DDL in §6.2, including `sources.alerted`, `sources.notify`, `passkeys.alg`); `Settings { timezone: String, default_lead_min: u32, all_day_time: String }` with defaults `UTC`, `15`, `09:00`; `get_settings(db) / put_settings(db, &Settings)`; `get_meta(db, key) -> Option<String>` / `set_meta(db, key, value)` / `del_meta(db, key)` (keys stored as `meta:<key>`); in `sched/alarm.rs`: `Floor { Http, AlarmClean, AlarmError }` (`Http`: normal floor, error streak untouched; `AlarmClean`: normal floor, streak reset to 0; `AlarmError`: streak + 1, error floor), `AlarmReport { step_errors: Vec<(String, String)>, top_level_error: Option<String> }`, `StepOutcome { ok: u32, failed: u32, step_error: Option<String> }`; `xtask test` = `cargo test --workspace` + `cargo clippy --workspace --all-targets -- -D warnings`.
 
-- [ ] **Step 1: Write the failing tests** in `crates/hub-testkit/tests/foundation.rs`
+- [ ] **Step 1: Write the failing tests** in `crates/kairos-testkit/tests/foundation.rs`
 
 ```rust
 #[tokio::test] async fn migration_creates_all_tables_and_is_idempotent() {
@@ -288,7 +288,7 @@ pub struct FakeHttp;  impl FakeHttp {
 }
 ```
 
-- [ ] **Step 2: Run** `cargo test -p hub-testkit --test foundation` — Expected: FAIL (crates do not exist / do not compile).
+- [ ] **Step 2: Run** `cargo test -p kairos-testkit --test foundation` — Expected: FAIL (crates do not exist / do not compile).
 - [ ] **Step 3: Implement** the workspace and the listed modules.
   - `Hub::handle` wraps routing in `AssertUnwindSafe(..).catch_unwind()` (`futures::FutureExt`); a panic becomes `500 {"error":"internal"}` and is logged.
   - `migrate` reads `meta:schema_version` (absent = 0) and applies `MIGRATIONS[v..]` in order, each inside `Db::transaction`, then writes the new version.
@@ -302,26 +302,26 @@ pub struct FakeHttp;  impl FakeHttp {
 ### Task 2: Worker adapters and the platform spike (verify-early items, §20)
 
 **Files:**
-- Create: `wrangler.toml`, `crates/hub-worker/src/{lib.rs, hub_do.rs, convert.rs, adapters/*.rs}`, `crates/hub-core/src/http/internal.rs` (test-hooks part), `crates/e2e/src/lib.rs`, `crates/e2e/tests/adapters.rs`, `docs/rust-on-workers-notes.md`, `.cargo/config.toml` (only if needed)
-- Modify: `xtask/src/main.rs` (`e2e` subcommand: ensure `crates/hub-web/dist/` exists with a placeholder `index.html` if the web app is not built yet, start the harness, run `cargo test -p e2e -- --test-threads=1`)
+- Create: `wrangler.toml`, `crates/kairos-worker/src/{lib.rs, hub_do.rs, convert.rs, adapters/*.rs}`, `crates/kairos-core/src/http/internal.rs` (test-hooks part), `crates/e2e/src/lib.rs`, `crates/e2e/tests/adapters.rs`, `docs/rust-on-workers-notes.md`, `.cargo/config.toml` (only if needed)
+- Modify: `xtask/src/main.rs` (`e2e` subcommand: ensure `crates/kairos-web/dist/` exists with a placeholder `index.html` if the web app is not built yet, start the harness, run `cargo test -p e2e -- --test-threads=1`)
 
 **Interfaces:**
 - Consumes: Task 1 ports, `Hub::{migrate, handle, run_alarm, rearm}`.
 - Produces:
   - `WorkerPorts` implementing `Ports` with these adapters: `DoDb` (SqlStorage + `transactionSync`), `DateClock`, `CryptoEntropy`, `FetchHttp` (streams the body and returns `NetError::TooLarge` past `max_body_bytes`), `DoAlarm`, `DoCommit` (`ctx.storage.sync()`).
-  - Feature `test-hooks` on `hub-worker` and `hub-core` (sets `Config::allow_http_urls = true`; enables `/__test/*`).
+  - Feature `test-hooks` on `kairos-worker` and `kairos-core` (sets `Config::allow_http_urls = true`; enables `/__test/*`).
   - `/__test/adapter/tx-rollback` (POST → `{ rolled_back: bool }`), `/__test/adapter/commit` (POST → `{ ok: true }` after `commit_point().await`), `/__test/adapter/alarm` (POST `{ at }` → sets it; GET → `{ at }`), `/__test/adapter/fetch` (POST `{ url, max }` → `{ status, len }` or `{ error: "too_large" }`).
   - e2e harness: `WranglerDev::start() -> &'static WranglerDev` (one process shared by all tests in the binary; runs `npx wrangler dev --env e2e --port 8799 --local`, waits for `GET /api/health`), `MockServer::start() -> MockServer` (axum on 127.0.0.1, routes `/bark/push`, `/feeds/:name`, `/big/:mb` chunked without Content-Length), `MockServer::url(path)`.
 
 `wrangler.toml` (exact keys):
 ```toml
-name = "reminder-hub"
+name = "kairos"
 main = "build/worker/shim.mjs"
 compatibility_date = "2026-11-01"
 [build]
-command = "cargo install -q worker-build && worker-build --release --panic-unwind crates/hub-worker"
+command = "cargo install -q worker-build && worker-build --release --panic-unwind crates/kairos-worker"
 [assets]
-directory = "crates/hub-web/dist"
+directory = "crates/kairos-web/dist"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*", "/auth/*"]
 [[durable_objects.bindings]]
@@ -336,8 +336,8 @@ crons = ["0 */6 * * *"]
 RP_ID = "CHANGE-ME"
 ORIGIN = "https://CHANGE-ME"
 [env.e2e]
-build = { command = "cargo install -q worker-build && worker-build --dev --panic-unwind crates/hub-worker --features test-hooks" }
-assets = { directory = "crates/hub-web/dist", not_found_handling = "single-page-application", run_worker_first = ["/api/*", "/auth/*", "/__test/*"] }
+build = { command = "cargo install -q worker-build && worker-build --dev --panic-unwind crates/kairos-worker --features test-hooks" }
+assets = { directory = "crates/kairos-web/dist", not_found_handling = "single-page-application", run_worker_first = ["/api/*", "/auth/*", "/__test/*"] }
 vars = { RP_ID = "localhost", ORIGIN = "http://localhost:8799" }
 # durable_objects / migrations / triggers repeated under env.e2e as wrangler requires
 ```
@@ -376,7 +376,7 @@ Row conversion in `DoDb::exec`: iterate the cursor's JS row objects; `null` → 
 ```
 
 - [ ] **Step 2: Run** `cargo xtask e2e` — Expected: FAIL (worker crate missing).
-- [ ] **Step 3: Implement** `hub-worker`, the adapters, the test-hook routes, and the harness as specified.
+- [ ] **Step 3: Implement** `kairos-worker`, the adapters, the test-hook routes, and the harness as specified.
 - [ ] **Step 4: Run** `cargo xtask e2e` — Expected: PASS. Also run `npx wrangler deploy --dry-run --outdir build/dry` and record in `docs/rust-on-workers-notes.md`: Wasm size, how `RawStorage` was obtained, the `worker-build` command that worked, whether `getrandom` needed the rustflag, and any `--panic-unwind` issue.
 - [ ] **Step 5: Commit** — `feat: workers-rs adapters, transactionSync binding and adapter smoke tests`
 
@@ -385,8 +385,8 @@ Row conversion in `DoDb::exec`: iterate the cursor's JS row objects; `null` → 
 ### Task 3: Time zones
 
 **Files:**
-- Create: `crates/hub-core/src/time/zone.rs` (+ `time/mod.rs`)
-- Test: unit tests in the same file; property tests in `crates/hub-testkit/tests/time_props.rs`
+- Create: `crates/kairos-core/src/time/zone.rs` (+ `time/mod.rs`)
+- Test: unit tests in the same file; property tests in `crates/kairos-testkit/tests/time_props.rs`
 
 **Interfaces:**
 - Produces:
@@ -417,7 +417,7 @@ pub enum TimeError { BadFormat(String), UnknownZone(String), OutOfRange }
 ```
 Property tests (`proptest`, zones `America/New_York`, `Europe/Berlin`, `Australia/Lord_Howe`, `Asia/Kolkata`, `UTC`; wall times in 2025–2027): (a) `utc_to_wall(wall_to_utc(w)) == w` whenever `w` exists in the zone; (b) for a gap wall time, `utc_to_wall(wall_to_utc(w)) == w + gap length`.
 
-- [ ] **Step 2: Run** `cargo test -p hub-core time:: && cargo test -p hub-testkit --test time_props` — FAIL.
+- [ ] **Step 2: Run** `cargo test -p kairos-core time:: && cargo test -p kairos-testkit --test time_props` — FAIL.
 - [ ] **Step 3: Implement** with `jiff` (`civil::DateTime::to_zoned` uses `Compatible` by default; look zones up with `jiff::tz::db().get`). `parse_api_instant`: if the string has an offset or `Z`, convert the instant to wall time in `zone_hint`; otherwise return the wall unchanged.
 - [ ] **Step 4: Run** both — PASS.
 - [ ] **Step 5: Commit** — `feat: wall-clock to UTC conversion with RFC 5545 DST rules`
@@ -427,8 +427,8 @@ Property tests (`proptest`, zones `America/New_York`, `Europe/Berlin`, `Australi
 ### Task 4: ICS parsing
 
 **Files:**
-- Create: `crates/hub-core/src/ics/parse.rs` (+ `ics/mod.rs`), `crates/hub-testkit/fixtures/*.ics`
-- Test: unit tests in `ics/parse.rs` (fixtures loaded with `include_str!("../../../hub-testkit/fixtures/…")`)
+- Create: `crates/kairos-core/src/ics/parse.rs` (+ `ics/mod.rs`), `crates/kairos-testkit/fixtures/*.ics`
+- Test: unit tests in `ics/parse.rs` (fixtures loaded with `include_str!("../../../kairos-testkit/fixtures/…")`)
 
 **Interfaces:**
 - Consumes: `parse_wall`, `is_valid_zone` (Task 3); `EventRow` (Task 1).
@@ -478,7 +478,7 @@ Rules (§9, implement each; one fixture per rule):
 ```
 (`\xE4\xBC\x9A` is `会`; the fold splits `议` = `\xE8\xAE\xAE` onto the continuation line — adjust the split to land inside a character if the fixture above does not.)
 
-- [ ] **Step 2: Run** `cargo test -p hub-core ics::parse` — FAIL.
+- [ ] **Step 2: Run** `cargo test -p kairos-core ics::parse` — FAIL.
 - [ ] **Step 3: Implement** `parse_ics` per the rules.
 - [ ] **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** — `feat: ICS parsing with cancellation, override and VALARM rules`
@@ -488,8 +488,8 @@ Rules (§9, implement each; one fixture per rule):
 ### Task 5: Recurrence expansion
 
 **Files:**
-- Create: `crates/hub-core/src/ics/expand.rs`
-- Test: unit tests in the same file; `crates/hub-testkit/tests/expand_props.rs`
+- Create: `crates/kairos-core/src/ics/expand.rs`
+- Test: unit tests in the same file; `crates/kairos-testkit/tests/expand_props.rs`
 
 **Interfaces:**
 - Consumes: `wall_to_utc`, `parse_wall` (Task 3); `StoredEvent`, `Occurrence`, `Anchor`, `ExpandStatus` (Task 1).
@@ -539,7 +539,7 @@ Algorithm (§7.4) — the part the signature does not determine:
 ```
 `expand_props.rs`: differential property — generated parent rows (DAILY/WEEKLY with BYDAY and INTERVAL 1–3/MONTHLY BYMONTHDAY=31/YEARLY; optional COUNT ≤ 400, UNTIL, up to 3 EXDATEs; zones as in Task 3; DTSTART 2018–2026) → for windows starting at random offsets, expanding with an anchor computed by a previous call equals expanding with `Budget::Unlimited`.
 
-- [ ] **Step 2: Run** `cargo test -p hub-core ics::expand && cargo test -p hub-testkit --test expand_props` — FAIL.
+- [ ] **Step 2: Run** `cargo test -p kairos-core ics::expand && cargo test -p kairos-testkit --test expand_props` — FAIL.
 - [ ] **Step 3: Implement** `expand_series` and `validate_rrule`.
 - [ ] **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** — `feat: floating recurrence expansion with anchor and budget`
@@ -549,8 +549,8 @@ Algorithm (§7.4) — the part the signature does not determine:
 ### Task 6: Event store, reminder planning, reconciliation, and the reconcile queue
 
 **Files:**
-- Create: `crates/hub-core/src/calendar/{events.rs, plan.rs, reconcile.rs}`, `crates/hub-core/src/sched/queue.rs`, `crates/hub-core/src/sources/model.rs`
-- Test: unit tests in `plan.rs`; `crates/hub-testkit/tests/reconcile.rs`
+- Create: `crates/kairos-core/src/calendar/{events.rs, plan.rs, reconcile.rs}`, `crates/kairos-core/src/sched/queue.rs`, `crates/kairos-core/src/sources/model.rs`
+- Test: unit tests in `plan.rs`; `crates/kairos-testkit/tests/reconcile.rs`
 
 **Interfaces:**
 - Consumes: Tasks 1, 3, 5.
@@ -603,7 +603,7 @@ Rules:
 #[test] fn empty_explicit_list_mutes() { assert!(matches!(resolve_leads(&row_with(Some(vec![])), None, 15), Leads::Muted)); }
 #[test] fn source_notify_off_mutes() {}
 #[test] fn all_day_single_reminder_at_nine_local() { /* Berlin all-day 2026-12-25 → fire_at == ms("2026-12-25T08:00:00Z"), key ends "|allday" */ }
-// hub-testkit/tests/reconcile.rs
+// kairos-testkit/tests/reconcile.rs
 #[tokio::test] async fn upsert_then_reconcile_inserts_pending() {}
 #[tokio::test] async fn changed_time_rewrites_sent_row_as_pending() {}
 #[tokio::test] async fn removed_with_attempts_logs_withdrawn_delivery() {}
@@ -614,7 +614,7 @@ Rules:
 #[tokio::test] async fn muted_source_withdraws_pending() {}
 ```
 
-- [ ] **Step 2: Run** `cargo test -p hub-core calendar::plan && cargo test -p hub-testkit --test reconcile` — FAIL.
+- [ ] **Step 2: Run** `cargo test -p kairos-core calendar::plan && cargo test -p kairos-testkit --test reconcile` — FAIL.
 - [ ] **Step 3: Implement** the modules.
 - [ ] **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** — `feat: event store, reminder planning, reconciliation and reconcile queue`
@@ -624,8 +624,8 @@ Rules:
 ### Task 7: Messages and the Bark channel
 
 **Files:**
-- Create: `crates/hub-core/src/notify/{message.rs, bark.rs, mod.rs}`
-- Test: unit tests in `message.rs`; `crates/hub-testkit/tests/bark.rs`
+- Create: `crates/kairos-core/src/notify/{message.rs, bark.rs, mod.rs}`
+- Test: unit tests in `message.rs`; `crates/kairos-testkit/tests/bark.rs`
 
 **Interfaces:**
 - Produces:
@@ -651,8 +651,8 @@ Exact copy (§10): title `⏰ <title>`; body `HH:mm · in N min` / `HH:mm · now
 ### Task 8: Source sync and source alerts
 
 **Files:**
-- Create: `crates/hub-core/src/sources/sync.rs`
-- Test: `crates/hub-testkit/tests/sync.rs`, fixtures
+- Create: `crates/kairos-core/src/sources/sync.rs`
+- Test: `crates/kairos-testkit/tests/sync.rs`, fixtures
 
 **Interfaces:**
 - Consumes: `parse_ics` (Task 4); store + queue (Task 6); `send_bark`, `format_source_alert`, `load_channel` (Task 7).
@@ -687,7 +687,7 @@ Rules (§7.5): trace first (`last_sync_at = now`, `consecutive_failures += 1`, `
 #[tokio::test] async fn rdate_and_unknown_tzid_warnings_in_last_result() {}
 ```
 
-- [ ] **Step 2: Run** `cargo test -p hub-testkit --test sync` — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
+- [ ] **Step 2: Run** `cargo test -p kairos-testkit --test sync` — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** — `feat: source sync with pessimistic traces and source alerts`
 
 ---
@@ -695,8 +695,8 @@ Rules (§7.5): trace first (`last_sync_at = now`, `consecutive_failures += 1`, `
 ### Task 9: Dispatch, alarm cycle, re-arm and backoff, maintenance, watchdog
 
 **Files:**
-- Create: `crates/hub-core/src/sched/dispatch.rs`; Modify: `crates/hub-core/src/sched/alarm.rs` (replace stubs), `crates/hub-core/src/http/internal.rs` (`/internal/rearm`), `crates/hub-worker/src/lib.rs` (`#[event(scheduled)]`)
-- Test: `crates/hub-testkit/tests/{dispatch.rs, alarm.rs}`
+- Create: `crates/kairos-core/src/sched/dispatch.rs`; Modify: `crates/kairos-core/src/sched/alarm.rs` (replace stubs), `crates/kairos-core/src/http/internal.rs` (`/internal/rearm`), `crates/kairos-worker/src/lib.rs` (`#[event(scheduled)]`)
+- Test: `crates/kairos-testkit/tests/{dispatch.rs, alarm.rs}`
 
 **Interfaces:**
 - Consumes: Tasks 6–8.
@@ -767,7 +767,7 @@ pub async fn rearm(&self, floor: Floor);
 #[tokio::test] async fn watchdog_noop_when_alarm_present_and_rearms_when_missing() { /* present → 0 writes (compare total_changes); missing → alarm set, meta written */ }
 ```
 
-- [ ] **Step 2: Run** `cargo test -p hub-testkit --test dispatch --test alarm` — FAIL.
+- [ ] **Step 2: Run** `cargo test -p kairos-testkit --test dispatch --test alarm` — FAIL.
 - [ ] **Step 3: Implement**; wire `Hub::run_alarm`/`rearm`; add the entry `scheduled` handler.
 - [ ] **Step 4: Run** — PASS; `cargo xtask e2e` still PASS.
 - [ ] **Step 5: Commit** — `feat: dispatch, isolated alarm steps, backoff and watchdog`
@@ -777,8 +777,8 @@ pub async fn rearm(&self, floor: Floor);
 ### Task 10: Auth primitives
 
 **Files:**
-- Create: `crates/hub-core/src/auth/{crypto.rs, cookies.rs, session.rs, csrf.rs, recovery.rs, challenge.rs, mod.rs}`
-- Test: unit tests in `crypto.rs`, `cookies.rs`, `challenge.rs`; `crates/hub-testkit/tests/auth_primitives.rs`
+- Create: `crates/kairos-core/src/auth/{crypto.rs, cookies.rs, session.rs, csrf.rs, recovery.rs, challenge.rs, mod.rs}`
+- Test: unit tests in `crypto.rs`, `cookies.rs`, `challenge.rs`; `crates/kairos-testkit/tests/auth_primitives.rs`
 
 **Interfaces:**
 - Produces:
@@ -813,13 +813,13 @@ Values: cookie names `__Host-sid`, `__Host-chal`; session 32 random bytes, store
 ### Task 11: WebAuthn verifier and software authenticator
 
 **Files:**
-- Create: `crates/hub-core/src/webauthn/{mod.rs, authdata.rs, cose.rs, verify.rs, options.rs}`, `crates/hub-testkit/src/authenticator.rs`
-- Test: `crates/hub-testkit/tests/webauthn.rs`
+- Create: `crates/kairos-core/src/webauthn/{mod.rs, authdata.rs, cose.rs, verify.rs, options.rs}`, `crates/kairos-testkit/src/authenticator.rs`
+- Test: `crates/kairos-testkit/tests/webauthn.rs`
 
 **Interfaces:**
 - Produces:
 ```rust
-// wire types (hub-types/src/auth.rs, base64url strings as in the WebAuthn JSON encoding).
+// wire types (kairos-types/src/auth.rs, base64url strings as in the WebAuthn JSON encoding).
 // JSON names are exact and need explicit #[serde(rename)]: id, rawId, type, response, clientDataJSON,
 // attestationObject, transports, authenticatorData, signature, userHandle (camelCase would produce "clientDataJson").
 pub struct RegistrationResponseJson { pub id: String, pub raw_id: String, pub r#type: String, pub response: AttestationResponseJson }
@@ -828,7 +828,7 @@ pub struct AuthenticationResponseJson { pub id: String, pub raw_id: String, pub 
 pub struct AssertionResponseJson { pub client_data_json: String, pub authenticator_data: String, pub signature: String, pub user_handle: Option<String> }
 pub struct CreationOptionsJson { /* rp {id,name}, user {id,name,displayName}, challenge, pubKeyCredParams [-7,-8,-257], authenticatorSelection {residentKey:"required", userVerification:"preferred"}, attestation:"none", excludeCredentials, timeout 120000 */ }
 pub struct RequestOptionsJson { /* challenge, rpId, userVerification:"preferred", allowCredentials: [] , timeout 120000 */ }
-// hub-core/webauthn
+// kairos-core/webauthn
 pub struct RpContext<'a> { pub rp_id: &'a str, pub origin: &'a str }
 pub struct NewCredential { pub id: String, pub public_key: Vec<u8>, pub alg: i64, pub counter: u32, pub transports: Vec<String> }
 pub struct StoredCredential { pub id: String, pub public_key: Vec<u8>, pub alg: i64, pub counter: u32 }
@@ -837,7 +837,7 @@ pub fn creation_options(rp: &RpContext, user_id: &[u8; 16], challenge: &[u8; 32]
 pub fn request_options(rp: &RpContext, challenge: &[u8; 32]) -> RequestOptionsJson;
 pub fn verify_registration(rp: &RpContext, challenge: &[u8; 32], resp: &RegistrationResponseJson) -> Result<NewCredential, WebauthnError>;
 pub fn verify_authentication(rp: &RpContext, challenge: &[u8; 32], user_id: &[u8; 16], cred: &StoredCredential, resp: &AuthenticationResponseJson) -> Result<u32 /*new counter*/, WebauthnError>;
-// hub-testkit/authenticator.rs
+// kairos-testkit/authenticator.rs
 pub enum Alg { Es256, EdDsa, Rs256 }
 pub struct SoftAuthenticator;  impl SoftAuthenticator {
     pub fn new(alg: Alg, seed: u64) -> Self;
@@ -849,7 +849,7 @@ pub struct SoftAuthenticator;  impl SoftAuthenticator {
 Checks: exactly the numbered lists in §11.2 (registration 1–8, authentication 1–6), in that order; signature before counter; ES256 DER signatures normalised to low-S before `p256` verification; EdDSA via `verify_strict`; RS256 PKCS#1 v1.5 SHA-256 with modulus ≥ 2,048 bits; `fmt`/`attStmt` ignored; extensions map skipped when `ED` is set.
 
 - [ ] **Step 1: Write the failing tests** — for each `Alg`: `registers_and_logs_in_<alg>`; negative tests, one per variant: `rejects_wrong_origin`, `rejects_wrong_challenge`, `rejects_create_type_on_login`, `rejects_cross_origin_true`, `rejects_wrong_rp_id_hash`, `rejects_user_presence_clear`, `rejects_trailing_bytes`, `accepts_extensions_map`, `accepts_uv_clear` (UV not required), `rejects_unsupported_alg` (P-384), `rejects_rsa_1024`, `rejects_id_mismatch`, `rejects_tampered_signature`, `rejects_counter_regression`, `accepts_zero_counters`, `accepts_high_s_es256`, `rejects_wrong_user_handle`.
-- [ ] **Step 2: Run** `cargo test -p hub-testkit --test webauthn` — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
+- [ ] **Step 2: Run** `cargo test -p kairos-testkit --test webauthn` — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** — `feat: in-house WebAuthn relying-party verification`
 
 ---
@@ -857,8 +857,8 @@ Checks: exactly the numbered lists in §11.2 (registration 1–8, authentication
 ### Task 12: Auth routes
 
 **Files:**
-- Create: `crates/hub-core/src/http/auth_routes.rs`; Modify: `http/router.rs`, `crates/hub-types/src/auth.rs`, `crates/hub-testkit/src/lib.rs` (`admin_session`)
-- Test: `crates/hub-testkit/tests/auth_routes.rs`
+- Create: `crates/kairos-core/src/http/auth_routes.rs`; Modify: `http/router.rs`, `crates/kairos-types/src/auth.rs`, `crates/kairos-testkit/src/lib.rs` (`admin_session`)
+- Test: `crates/kairos-testkit/tests/auth_routes.rs`
 
 **Interfaces:**
 - Consumes: Tasks 10–11.
@@ -874,13 +874,13 @@ Checks: exactly the numbered lists in §11.2 (registration 1–8, authentication
 ### Task 13: API tokens and public API v1
 
 **Files:**
-- Create: `crates/hub-core/src/auth/tokens.rs`, `crates/hub-core/src/http/{api_v1.rs, validate.rs}`, `crates/hub-types/src/{api_v1.rs, limits.rs}`
-- Test: `crates/hub-testkit/tests/api_v1.rs`
+- Create: `crates/kairos-core/src/auth/tokens.rs`, `crates/kairos-core/src/http/{api_v1.rs, validate.rs}`, `crates/kairos-types/src/{api_v1.rs, limits.rs}`
+- Test: `crates/kairos-testkit/tests/api_v1.rs`
 
 **Interfaces:**
 - Produces:
 ```rust
-// hub-types/api_v1.rs
+// kairos-types/api_v1.rs
 #[serde(deny_unknown_fields)] pub struct EventPayload { pub title: String, pub start: String, pub end: Option<String>, pub all_day: Option<bool>,
     pub timezone: Option<String>, pub location: Option<String>, pub description: Option<String>,
     pub rrule: Option<String>, pub exdates: Option<Vec<String>>, pub reminders: Option<Vec<u32>> }
@@ -889,14 +889,14 @@ pub struct OccurrenceDto { pub occ_key: String, pub origin: String, pub external
     pub title: String, pub location: Option<String>, pub all_day: bool, pub start_utc: i64, pub end_utc: i64,
     pub start_local: String, pub end_local: String }
 pub struct ListEventsResponse { pub occurrences: Vec<OccurrenceDto>, pub truncated: Vec<String> }
-// hub-core
-pub fn create_token<P: Ports>(hub: &Hub<P>, name: &str) -> Result<(i64, String /*rh_… shown once*/), CoreError>;
+// kairos-core
+pub fn create_token<P: Ports>(hub: &Hub<P>, name: &str) -> Result<(i64, String /*kr_… shown once*/), CoreError>;
 pub fn verify_bearer<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<i64 /*token id*/, CoreError>;   // updates last_used_at at most once per hour
 pub fn list_tokens(db: &impl Db) -> Result<Vec<TokenInfo>, CoreError>;  pub fn revoke_token(db: &impl Db, id: i64) -> Result<(), CoreError>;
 pub fn validate_payload(p: &EventPayload, external_id: &str, user_tz: &str) -> Result<EventRow, CoreError>;   // CoreError::Invalid { field, … }
 pub fn list_occurrences<P: Ports>(hub: &Hub<P>, from: i64, to: i64, include_disabled: bool) -> Result<(Vec<OccurrenceDto>, Vec<String>), CoreError>;  // shared with Task 14
 ```
-Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_series` in one transaction → `rearm`; `start` parsed with `parse_api_instant(start, timezone.unwrap_or(user_tz))`; `exdates` only with `rrule`; `reminders: []` → `lead_minutes = Some(vec![])`; absent → `None`; `rrule` validated with `validate_rrule`; DELETE → `204` / `404`, inline withdraw; GET range ≤ 92 days, hides disabled sources, `start_local`/`end_local` in the user zone. Tokens `rh_` + b64url(32 bytes); stored SHA-256 hex + 10-char prefix. API tokens may only write `api` events (other series keys are unreachable by construction: `series_key = "api:<external_id>"`).
+Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_series` in one transaction → `rearm`; `start` parsed with `parse_api_instant(start, timezone.unwrap_or(user_tz))`; `exdates` only with `rrule`; `reminders: []` → `lead_minutes = Some(vec![])`; absent → `None`; `rrule` validated with `validate_rrule`; DELETE → `204` / `404`, inline withdraw; GET range ≤ 92 days, hides disabled sources, `start_local`/`end_local` in the user zone. Tokens `kr_` + b64url(32 bytes); stored SHA-256 hex + 10-char prefix. API tokens may only write `api` events (other series keys are unreachable by construction: `series_key = "api:<external_id>"`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -925,12 +925,12 @@ Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_seri
 ### Task 14: Admin API
 
 **Files:**
-- Create: `crates/hub-core/src/http/admin/{mod.rs, calendar.rs, sources.rs, events.rs, settings.rs, channel.rs, passkeys.rs, tokens.rs, log.rs, queue.rs, export.rs}`, `crates/hub-core/src/export.rs`, `crates/hub-types/src/{admin.rs, repeat.rs}`
-- Test: `crates/hub-testkit/tests/admin.rs`; unit tests in `hub-types/src/repeat.rs`
+- Create: `crates/kairos-core/src/http/admin/{mod.rs, calendar.rs, sources.rs, events.rs, settings.rs, channel.rs, passkeys.rs, tokens.rs, log.rs, queue.rs, export.rs}`, `crates/kairos-core/src/export.rs`, `crates/kairos-types/src/{admin.rs, repeat.rs}`
+- Test: `crates/kairos-testkit/tests/admin.rs`; unit tests in `kairos-types/src/repeat.rs`
 
 **Interfaces:**
 - Consumes: everything above; `list_occurrences` (Task 13).
-- Produces (all under `full` session + Origin; DTOs in `hub-types/admin.rs`):
+- Produces (all under `full` session + Origin; DTOs in `kairos-types/admin.rs`):
   - `GET /api/admin/calendar?from&to` → `ListEventsResponse` plus per occurrence `event_id`, `color`, `deletable` (manual/api), `editable` (manual), `reminders: [{ key, fire_at, status }]`.
   - `sources`: `GET` list; `POST` create (`https://` only unless `allow_http_urls`; `interval_min ≥ 15`); `PATCH /:id` (name, url, color, enabled, interval_min, default_lead_min, honor_valarm, notify) → `enqueue_where(Source(id))`, response includes `queued`; `DELETE /:id` → delete its events (withdraw via queue) and the source; `POST /:id/sync` → sync it now inline (one source) and return the row.
   - `events`: `POST` manual create (`ManualEventInput { title, start, end?, all_day, timezone?, location?, description?, repeat: Option<RepeatPreset>, reminders: ReminderChoice }`) → inline reconcile; `PATCH /:id` manual only (whole series); `DELETE /:id` manual or api; `POST /:id/skip { slot }` manual recurring only → `add_exdate` + inline reconcile; api → `409 { error: "not_manual" }`.
@@ -941,7 +941,7 @@ Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_seri
   - `log`: `GET` → `{ failed_reminders, deliveries (newest 200), failing_sources, expansion_warnings, background: { alarm_error_streak, last_alarm_error, last_maintenance_at, last_maintenance_error, last_watchdog_at } }`.
   - `queue`: `GET` → `{ length }`.
   - `export.json` (no passkeys, sessions, tokens; Bark key masked) and `export.ics` (all non-disabled series as VEVENTs with RRULE/EXDATE).
-  - `hub-types/repeat.rs`: `RepeatPreset { freq: Daily|Weekly{days}|Monthly|Yearly, interval: u8 (1–99), end: Never|Until(date)|Count(u16 1–999) }`; `to_rrule(&RepeatPreset) -> String` (Monthly uses the start's day of month: `FREQ=MONTHLY;BYMONTHDAY=<d>`); `from_rrule(&str, start_date) -> Option<RepeatPreset>` (inverse for editing).
+  - `kairos-types/repeat.rs`: `RepeatPreset { freq: Daily|Weekly{days}|Monthly|Yearly, interval: u8 (1–99), end: Never|Until(date)|Count(u16 1–999) }`; `to_rrule(&RepeatPreset) -> String` (Monthly uses the start's day of month: `FREQ=MONTHLY;BYMONTHDAY=<d>`); `from_rrule(&str, start_date) -> Option<RepeatPreset>` (inverse for editing).
   - `ReminderChoice { Default, Custom(Vec<u32>), None }` → `lead_minutes` `None` / `Some(v)` / `Some(vec![])`.
 
 - [ ] **Step 1: Write the failing tests** — `admin_requires_full_session`, `calendar_marks_deletable_and_editable`, `calendar_start_local_follows_user_zone_across_dst` (**Review Focus 4**: user `Asia/Shanghai`, weekly NY 09:00 from 2026-10-19, window 2026-10-19..2026-11-15 → `start_local` times `21:00` for 10-19/10-26 and `22:00` for 11-02/11-09 — NY falls back on 11-01, so Shanghai sees the later hour after it), `disabled_source_hidden_and_reminders_withdrawn_after_drain`, `notify_off_withdraws_reminders`, `settings_zone_change_queues_floating_only`, `manual_weekly_preset_creates_rrule`, `skip_one_occurrence_of_manual_series`, `skip_on_api_series_is_409`, `last_passkey_delete_needs_confirm`, `passkey_rename`, `channel_test_logs_test_delivery`, `token_shown_once`, `log_contains_background_section`, `queue_length_reports_pending_items`, `export_json_excludes_secrets`, `export_ics_round_trips_through_parse_ics`; `repeat.rs`: `to_rrule_from_rrule_round_trip` for each preset.
@@ -953,12 +953,12 @@ Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_seri
 ### Task 15: Web app shell, API client, passkeys in the browser, auth screens
 
 **Files:**
-- Create: `crates/hub-web/{Cargo.toml, Trunk.toml, index.html, boot.js, _headers, style.css}`, `crates/hub-web/src/{main.rs, app.rs, api.rs, passkey.rs, b64.rs, strings.rs, pages/setup.rs, pages/login.rs}`
-- Modify: `xtask/src/main.rs` (`build`: `trunk build --release` in `crates/hub-web`, then worker build; `test`: add `cargo test -p hub-web` and the `inner_html` check: fail if `grep -R "inner_html" crates/hub-web/src` finds anything)
+- Create: `crates/kairos-web/{Cargo.toml, Trunk.toml, index.html, boot.js, _headers, style.css}`, `crates/kairos-web/src/{main.rs, app.rs, api.rs, passkey.rs, b64.rs, strings.rs, pages/setup.rs, pages/login.rs}`
+- Modify: `xtask/src/main.rs` (`build`: `trunk build --release` in `crates/kairos-web`, then worker build; `test`: add `cargo test -p kairos-web` and the `inner_html` check: fail if `grep -R "inner_html" crates/kairos-web/src` finds anything)
 - Test: unit tests in `b64.rs`, `api.rs` (URL building and error mapping only)
 
 **Interfaces:**
-- Consumes: `hub-types` DTOs (Tasks 12–14).
+- Consumes: `kairos-types` DTOs (Tasks 12–14).
 - Produces:
 ```rust
 pub enum ApiError { Unauthorized, Forbidden, NotFound, Conflict { code: String, warning: String }, Invalid { field: String, message: String }, TooManyRequests, Network(String), Server(u16) }
@@ -968,11 +968,11 @@ pub async fn create_passkey(opts: CreationOptionsJson) -> Result<RegistrationRes
 pub async fn get_passkey(opts: RequestOptionsJson) -> Result<AuthenticationResponseJson, String>;
 pub fn browser_time_zone() -> String;                 // Intl.DateTimeFormat().resolvedOptions().timeZone via js-sys
 ```
-- `Trunk.toml`: `[build] target = "index.html"`, `dist = "dist"`, `filehash = false`, `inject_scripts = false` (verify the key names against the resolved Trunk version; record in the notes). `index.html` has `<link data-trunk rel="rust" data-bin="hub-web" />`, `copy-file` links for `boot.js` and `_headers`, `<link data-trunk rel="css" href="style.css" />`, and `<script type="module" src="/boot.js"></script>`.
+- `Trunk.toml`: `[build] target = "index.html"`, `dist = "dist"`, `filehash = false`, `inject_scripts = false` (verify the key names against the resolved Trunk version; record in the notes). `index.html` has `<link data-trunk rel="rust" data-bin="kairos-web" />`, `copy-file` links for `boot.js` and `_headers`, `<link data-trunk rel="css" href="style.css" />`, and `<script type="module" src="/boot.js"></script>`.
 - `boot.js` (exact):
 ```js
-import init from './hub-web.js';
-await init({ module_or_path: './hub-web_bg.wasm' });
+import init from './kairos-web.js';
+await init({ module_or_path: './kairos-web_bg.wasm' });
 ```
 (If Trunk emits different file names, use those names; `filehash = false` keeps them stable.)
 - `_headers` (exact):
@@ -985,15 +985,15 @@ await init({ module_or_path: './hub-web_bg.wasm' });
   Cache-Control: no-cache
 /boot.js
   Cache-Control: no-cache
-/hub-web.js
+/kairos-web.js
   Cache-Control: no-cache
-/hub-web_bg.wasm
+/kairos-web_bg.wasm
   Cache-Control: no-cache
 ```
 - Routes and guards (§13.1): `/setup` (step 1 recovery code → step 2 register passkey → save `browser_time_zone()` via `PUT /api/admin/settings` → `/calendar`), `/login` (one button: passkey login), all other pages require a full session; any `ApiError::Unauthorized` navigates to `/login`. Shell: top navigation Calendar · Sources · Events · Settings · Log · Log out. All copy from `strings.rs`.
 
 - [ ] **Step 1: Write the failing tests** — `b64url_round_trip_and_no_padding`, `api_maps_409_confirm_required` (pure mapping from status + JSON body), `api_maps_401_to_unauthorized`.
-- [ ] **Step 2: Run** `cargo test -p hub-web` — FAIL. **Step 3: Implement** the shell, `api.rs`, `passkey.rs`, setup and login pages. **Step 4: Run** `cargo xtask build` — PASS, `crates/hub-web/dist` contains `index.html`, `boot.js`, `_headers`, `hub-web.js`, `hub-web_bg.wasm`; open `npx wrangler dev` → setup page loads with no CSP errors in the console (check manually; Task 17 automates it).
+- [ ] **Step 2: Run** `cargo test -p kairos-web` — FAIL. **Step 3: Implement** the shell, `api.rs`, `passkey.rs`, setup and login pages. **Step 4: Run** `cargo xtask build` — PASS, `crates/kairos-web/dist` contains `index.html`, `boot.js`, `_headers`, `kairos-web.js`, `kairos-web_bg.wasm`; open `npx wrangler dev` → setup page loads with no CSP errors in the console (check manually; Task 17 automates it).
 - [ ] **Step 5: Commit** — `feat: Leptos shell, browser passkeys and setup/login`
 
 ---
@@ -1001,7 +1001,7 @@ await init({ module_or_path: './hub-web_bg.wasm' });
 ### Task 16: Web pages
 
 **Files:**
-- Create: `crates/hub-web/src/calendar_grid.rs`, `crates/hub-web/src/pages/{calendar.rs, sources.rs, events.rs, settings.rs, log.rs}`, `crates/hub-web/src/components/{event_drawer.rs, confirm_dialog.rs, repeat_editor.rs, reminder_editor.rs}`
+- Create: `crates/kairos-web/src/calendar_grid.rs`, `crates/kairos-web/src/pages/{calendar.rs, sources.rs, events.rs, settings.rs, log.rs}`, `crates/kairos-web/src/components/{event_drawer.rs, confirm_dialog.rs, repeat_editor.rs, reminder_editor.rs}`
 - Test: unit tests in `calendar_grid.rs`
 
 **Interfaces:**
@@ -1016,7 +1016,7 @@ Pages (§13.1 table — implement every capability listed there):
 - **Log:** failed reminders pinned; deliveries; failing sources; expansion warnings; background errors.
 
 - [ ] **Step 1: Write the failing tests** — `month_grid_starts_monday` (2026-11 → 6 rows, first cell 2026-10-26, last cell 2026-12-06), `three_day_all_day_placed_on_each_day`, `week_of_sunday_returns_previous_monday` (2026-11-22 → first day 2026-11-16).
-- [ ] **Step 2: Run** `cargo test -p hub-web calendar_grid` — FAIL. **Step 3: Implement** the grid and the pages. **Step 4: Run** — PASS; `cargo xtask build` — PASS.
+- [ ] **Step 2: Run** `cargo test -p kairos-web calendar_grid` — FAIL. **Step 3: Implement** the grid and the pages. **Step 4: Run** — PASS; `cargo xtask build` — PASS.
 - [ ] **Step 5: Commit** — `feat: calendar, sources, events, settings and log pages`
 
 ---
@@ -1024,7 +1024,7 @@ Pages (§13.1 table — implement every capability listed there):
 ### Task 17: End-to-end, test hooks, deploy tooling, docs and measurements
 
 **Files:**
-- Modify: `crates/hub-core/src/http/internal.rs` (`/__test/clock`, `/__test/alarm`), `crates/hub-core/src/lib.rs` (`Hub::now` adds `meta:test_clock_offset_ms` only with `test-hooks`), `crates/e2e/src/lib.rs` (browser helper), `xtask/src/main.rs` (`deploy`), `README.md`, `docs/rust-on-workers-notes.md`
+- Modify: `crates/kairos-core/src/http/internal.rs` (`/__test/clock`, `/__test/alarm`), `crates/kairos-core/src/lib.rs` (`Hub::now` adds `meta:test_clock_offset_ms` only with `test-hooks`), `crates/e2e/src/lib.rs` (browser helper), `xtask/src/main.rs` (`deploy`), `README.md`, `docs/rust-on-workers-notes.md`
 - Create: `crates/e2e/tests/smoke.rs`
 
 **Interfaces:**
@@ -1038,7 +1038,7 @@ Pages (§13.1 table — implement every capability listed there):
   5. `POST /__test/clock { offset_ms: 90 min }` → `POST /__test/alarm` → mock Bark received a push titled `⏰ Dentist <b>x</b>`.
   6. Log page lists the delivery as sent.
   7. Log out → `/login` → passkey login → `/calendar`.
-  8. Save the registration and login JSON captured from the network as `crates/hub-testkit/fixtures/chrome_registration.json` / `chrome_login.json` (first run only; committed) and add `hub-testkit/tests/webauthn.rs::chrome_fixture_verifies` that verifies them with `rp_id = "localhost"`, `origin = "http://localhost:8799"`, the challenges decoded from each fixture's `clientDataJSON`, and the user id from the registration options.
+  8. Save the registration and login JSON captured from the network as `crates/kairos-testkit/fixtures/chrome_registration.json` / `chrome_login.json` (first run only; committed) and add `kairos-testkit/tests/webauthn.rs::chrome_fixture_verifies` that verifies them with `rp_id = "localhost"`, `origin = "http://localhost:8799"`, the challenges decoded from each fixture's `clientDataJSON`, and the user id from the registration options.
 - [ ] **Step 2: Run** `cargo xtask e2e` — FAIL (hooks and browser helper missing).
 - [ ] **Step 3: Implement** the hooks, the browser helper, `xtask deploy`, and the README (prerequisites: Rust stable + nightly via `worker-build`, Trunk, Node for wrangler, Chrome for e2e; first deploy: set `RP_ID`/`ORIGIN`, `wrangler secret put RECOVERY_CODE` / `SESSION_SECRET`, `cargo xtask deploy`, open `/setup`; operations: Log page, `wrangler tail --format json`, domain change → recovery flow; Paid plan if CPU limits are hit). If `__Host-` cookies are refused on `http://localhost` by the test browser, record it in the notes and run e2e with `wrangler dev --local-protocol https` instead (and `ORIGIN = "https://localhost:8799"`).
 - [ ] **Step 4: Run** `cargo xtask test && cargo xtask e2e` — PASS. Then, on a real deployment (manual, with the user): record in `docs/rust-on-workers-notes.md` `startup_time_ms`, backend and web Wasm sizes, and `cpuTime` from `wrangler tail` for one sync of the largest real feed (§3 ⚠️1, ⚠️2).

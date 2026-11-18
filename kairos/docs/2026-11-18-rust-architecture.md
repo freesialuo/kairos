@@ -1,4 +1,4 @@
-# Personal Reminder Hub — Architecture Design (all-Rust)
+# Kairos — Personal Reminder Hub: Architecture Design (all-Rust)
 
 Date: 2026-11-18 · Status: product scope approved by the user on 2026-11-17 (unchanged). Implementation re-based on an all-Rust stack on 2026-11-18: the user chose Rust for the backend **and** the frontend, picked Approach A (§4.2), and accepted Claude's defaults (§19). This document supersedes the TypeScript architecture in `2026-11-17-design.md`; the product behaviour it specifies is carried over unchanged unless §21 says otherwise.
 
@@ -120,16 +120,16 @@ One user maps to one named Durable Object (`id_from_name("main")`). SQLite data,
 
 | Crate | Target | Contents | Depends on |
 |---|---|---|---|
-| `hub-core` | native + `wasm32-unknown-unknown` | All behaviour: domain, scheduling, sync, auth, WebAuthn verification, **the HTTP router and handlers**. Talks to the outside world only through ports (§5.3). | `hub-types`, pure-Rust crates (§5.5) |
-| `hub-worker` | `wasm32-unknown-unknown` (`cdylib`) | Entry Worker and the `Hub` Durable Object; adapters that implement the ports on Workers APIs; request/response conversion. Thin: no business rules. | `hub-core`, `worker` |
-| `hub-web` | `wasm32-unknown-unknown` | Leptos SPA built with Trunk | `hub-types`, `leptos`, `leptos_router`, `web-sys`, `gloo-net` |
-| `hub-types` | both | Serde DTOs for every request and response body, and shared validation limits (lengths, ranges, regexes) | `serde` |
+| `kairos-core` | native + `wasm32-unknown-unknown` | All behaviour: domain, scheduling, sync, auth, WebAuthn verification, **the HTTP router and handlers**. Talks to the outside world only through ports (§5.3). | `kairos-types`, pure-Rust crates (§5.5) |
+| `kairos-worker` | `wasm32-unknown-unknown` (`cdylib`) | Entry Worker and the `Hub` Durable Object; adapters that implement the ports on Workers APIs; request/response conversion. Thin: no business rules. | `kairos-core`, `worker` |
+| `kairos-web` | `wasm32-unknown-unknown` | Leptos SPA built with Trunk | `kairos-types`, `leptos`, `leptos_router`, `web-sys`, `gloo-net` |
+| `kairos-types` | both | Serde DTOs for every request and response body, and shared validation limits (lengths, ranges, regexes) | `serde` |
 | `xtask` | native | `cargo xtask build | test | e2e | deploy` (§17) | — |
 | `e2e` | native | Browser end-to-end tests (§18) | `chromiumoxide`, a mock Bark and feed server |
 
-`hub-types` is the contract between the SPA, the Hub, and scripts: a field changed on one side fails to compile on the other.
+`kairos-types` is the contract between the SPA, the Hub, and scripts: a field changed on one side fails to compile on the other.
 
-### 5.3 Ports (the boundary between `hub-core` and the platform)
+### 5.3 Ports (the boundary between `kairos-core` and the platform)
 
 ```rust
 pub trait Db {                                    // synchronous, like DO SQLite
@@ -144,11 +144,11 @@ pub trait Commit  { async fn commit_point(&self); }   // forces pending writes d
 ```
 
 - **Values:** `Value = Null | Integer(i64) | Real(f64) | Text(String) | Blob(Vec<u8>)`. `Row` is a column-name → `Value` map with typed getters. `exec` always returns fully materialised rows, which satisfies the "consume cursors before `await`" rule by construction.
-- **Async:** ports use `async fn` in traits with non-`Send` futures (Workers is single-threaded). `hub-core` is generic over the ports (`Hub<P: Ports>`), so there is no `dyn` and no boxing.
+- **Async:** ports use `async fn` in traits with non-`Send` futures (Workers is single-threaded). `kairos-core` is generic over the ports (`Hub<P: Ports>`), so there is no `dyn` and no boxing.
 - **`OutRequest`** carries a `max_body_bytes`. The adapter streams the body and aborts past the cap, so a 5 MB guard (§7.5) is enforced before the whole body is in memory.
 - **`Config`** (not a port): `rp_id`, `origin`, the SHA-256 digest of the recovery code, the session secret, and feature switches (`allow_http_urls` for tests only).
-- **Production adapters** (`hub-worker`): `Db` → `SqlStorage` + the `transactionSync` binding; `Clock` → `Date.now()`; `Entropy` → `getrandom`; `Http` → `worker::Fetch`; `Alarm` → `storage.get_alarm/set_alarm`; `Commit` → `ctx.storage.sync()` (bound like `transactionSync` if the SDK does not expose it).
-- **Test adapters** (in a separate `hub-testkit` crate, which also holds the integration tests, to avoid a dev-dependency cycle): `Db` → in-memory `rusqlite` with real transactions; `FakeClock`; seeded `Entropy`; scripted `FakeHttp` that records every request; `FakeAlarm`; `Commit` → no-op.
+- **Production adapters** (`kairos-worker`): `Db` → `SqlStorage` + the `transactionSync` binding; `Clock` → `Date.now()`; `Entropy` → `getrandom`; `Http` → `worker::Fetch`; `Alarm` → `storage.get_alarm/set_alarm`; `Commit` → `ctx.storage.sync()` (bound like `transactionSync` if the SDK does not expose it).
+- **Test adapters** (in a separate `kairos-testkit` crate, which also holds the integration tests, to avoid a dev-dependency cycle): `Db` → in-memory `rusqlite` with real transactions; `FakeClock`; seeded `Entropy`; scripted `FakeHttp` that records every request; `FakeAlarm`; `Commit` → no-op.
 
 ### 5.4 Runtime model
 
@@ -165,14 +165,14 @@ pub trait Commit  { async fn commit_point(&self); }   // forces pending writes d
 | Concern | Crate(s) | Notes |
 |---|---|---|
 | Workers bindings | `worker`, `wasm-bindgen`, `js-sys`, `web-sys` | Entry Worker + DO |
-| Routing (inside `hub-core`) | `matchit` | Path matching only; handlers are plain functions over core `Request`/`Response` types |
+| Routing (inside `kairos-core`) | `matchit` | Path matching only; handlers are plain functions over core `Request`/`Response` types |
 | JSON | `serde`, `serde_json` | |
 | ICS lines and components | `ical` (0.11) | Unfolding, property/parameter parsing, component tree. Semantics (§9) are ours. |
 | Recurrence | `rrule` (0.14) | Used in *floating* time only (§7.4); brings `chrono` + `chrono-tz` |
 | Time zones, civil time | `jiff` (bundled tzdb on Wasm) | DST resolution with `Disambiguation::Compatible` (§8) |
 | Hashes, MAC, constant time | `sha2`, `hmac`, `subtle` | |
 | Randomness | `getrandom` (JS backend) | |
-| WebAuthn wire types | `webauthn-rs-proto` (pure serde) — or hand-written in `hub-types` if its browser conversions do not fit Leptos | |
+| WebAuthn wire types | `webauthn-rs-proto` (pure serde) — or hand-written in `kairos-types` if its browser conversions do not fit Leptos | |
 | CBOR / COSE | `ciborium`, `coset` | |
 | Signatures | `p256` (ES256), `ed25519-dalek` (EdDSA), `rsa` (RS256 verify only) | Verification only; no private-key operations |
 | Encoding | `base64` (URL-safe, no padding) | |
@@ -423,7 +423,7 @@ Together with Invariant 2, this bounds worst-case wake-ups: even a step that fai
 ### 7.7 API upsert (inline path example)
 
 ```
-Script ─PUT /api/v1/events/standup─► Entry Worker ─► Hub.fetch ─► hub_core::router
+Script ─PUT /api/v1/events/standup─► Entry Worker ─► Hub.fetch ─► kairos_core::router
   verify_bearer → validate(EventPayload) → db.transaction(|tx| {
      upsert_event(tx, 'api:standup') → changed?
      changed → reconcile_series(tx, 'api:standup', now)
@@ -452,7 +452,7 @@ An alarm can still be lost: if the runtime kills the same alarm invocation 7 tim
 
 ## 9. ICS Support Matrix
 
-Parsing: `ical` provides unfolded lines, properties, parameters, and the component tree. Interpreting them (this table) is `hub-core::ics`.
+Parsing: `ical` provides unfolded lines, properties, parameters, and the component tree. Interpreting them (this table) is `kairos-core::ics`.
 
 | Feature | Handling |
 |---|---|
@@ -494,7 +494,7 @@ Parsing: `ical` provides unfolded lines, properties, parameters, and the compone
 |---|---|---|
 | Owner (web) | Passkey → `full` session | Everything under `/api/admin/*` and `/auth/*` |
 | Owner recovering | Recovery code → `recovery` session | Only passkey registration (and logout) |
-| Script | Bearer token `rh_…` | `GET /api/v1/events` (all origins, read-only); `PUT`/`DELETE` of `api`-origin events only |
+| Script | Bearer token `kr_…` | `GET /api/v1/events` (all origins, read-only); `PUT`/`DELETE` of `api`-origin events only |
 | Watchdog | Internal path, reachable only from the entry Worker | `/internal/rearm` |
 | Anonymous | — | `GET /auth/state`, login and recovery endpoints, static assets |
 
@@ -527,9 +527,9 @@ Parsing: `ical` provides unfolded lines, properties, parameters, and the compone
 5. **Signature first:** over `authData || SHA-256(clientDataJSON)` with the stored key. ES256: DER-encoded ECDSA; high-S signatures are normalised before verification (authenticators are not required to produce low-S). EdDSA: strict Ed25519 verification. RS256: RSASSA-PKCS1-v1_5 with SHA-256.
 6. **Counter second:** if the stored or the new counter is non-zero and `new <= stored`, reject and log "possible cloned authenticator"; otherwise store the new counter and `last_used_at`.
 
-**Why in-house is acceptable:** the scope is small (one user, no attestation, three algorithms, no extensions), the code is about 300–400 lines of pure functions in `hub-core::webauthn`, it uses audited crypto crates for the actual signature math, and it is tested natively with a software authenticator that mints real ceremonies (§18). `rsa` is used for public-key verification only, which the known `rsa` timing advisory (private-key operations) does not affect.
+**Why in-house is acceptable:** the scope is small (one user, no attestation, three algorithms, no extensions), the code is about 300–400 lines of pure functions in `kairos-core::webauthn`, it uses audited crypto crates for the actual signature math, and it is tested natively with a software authenticator that mints real ceremonies (§18). `rsa` is used for public-key verification only, which the known `rsa` timing advisory (private-key operations) does not affect.
 
-**Browser side:** `hub-web` calls `navigator.credentials.create/get` through `web-sys`, converting base64url ↔ `ArrayBuffer` in Rust.
+**Browser side:** `kairos-web` calls `navigator.credentials.create/get` through `web-sys`, converting base64url ↔ `ArrayBuffer` in Rust.
 
 ### 11.3 Recovery code
 
@@ -549,7 +549,7 @@ Parsing: `ical` provides unfolded lines, properties, parameters, and the compone
 
 ### 11.5 API tokens
 
-- Format: `rh_` + 32 random bytes in base64url.
+- Format: `kr_` + 32 random bytes in base64url.
 - Shown once when created. Only the SHA-256 hash is stored, plus a 10-character prefix for display, the name, and `last_used_at`.
 - Revocable at any time.
 
@@ -571,7 +571,7 @@ Parsing: `ical` provides unfolded lines, properties, parameters, and the compone
 
 ## 12. HTTP Surface
 
-All routing happens in `hub-core::router` (`matchit` path tables per prefix), so every route is testable natively. Request and response bodies are `hub-types` structs.
+All routing happens in `kairos-core::router` (`matchit` path tables per prefix), so every route is testable natively. Request and response bodies are `kairos-types` structs.
 
 | Prefix | Auth | Routes |
 |---|---|---|
@@ -597,7 +597,7 @@ All routing happens in `hub-core::router` (`matchit` path tables per prefix), so
 
 ### 13.1 Structure
 
-- **Stack:** Leptos (client-side rendering) + `leptos_router`, compiled to Wasm by Trunk, served as static assets. API calls via `gloo-net` with `hub-types` DTOs. All UI copy is English, in one `strings.rs`. Weeks start on Monday.
+- **Stack:** Leptos (client-side rendering) + `leptos_router`, compiled to Wasm by Trunk, served as static assets. API calls via `gloo-net` with `kairos-types` DTOs. All UI copy is English, in one `strings.rs`. Weeks start on Monday.
 - **Calendar layout** uses the server's `start_local` / `end_local` strings (§8); the browser does no zone math. The browser's zone is read once, at first-time setup, through `Intl.DateTimeFormat().resolvedOptions().timeZone` (`js-sys`).
 - **Navigation guards:**
   - `setupRequired` and no session → `/setup` (step 1: enter the recovery code);
@@ -664,13 +664,13 @@ All routing happens in `hub-core::router` (`matchit` path tables per prefix), so
 ## 17. Build, Deployment and Configuration
 
 **Toolchains**
-- Stable Rust (pinned in `rust-toolchain.toml`) for `hub-core`, `hub-types`, `hub-web`, `xtask`, `e2e`.
-- `worker-build --release --panic-unwind` for `hub-worker`; it uses a nightly toolchain, which is pinned to a dated nightly so builds are reproducible.
-- Trunk for `hub-web`. Node.js only to run `wrangler`.
+- Stable Rust (pinned in `rust-toolchain.toml`) for `kairos-core`, `kairos-types`, `kairos-web`, `xtask`, `e2e`.
+- `worker-build --release --panic-unwind` for `kairos-worker`; it uses a nightly toolchain, which is pinned to a dated nightly so builds are reproducible.
+- Trunk for `kairos-web`. Node.js only to run `wrangler`.
 
 **`cargo xtask`**
-- `build`: `trunk build --release` (into `crates/hub-web/dist`, which includes `boot.js` and `_headers`), then the worker build.
-- `test`: `cargo test --workspace` natively; `wasm-bindgen-test` (under Node) for the pure `hub-core` modules on `wasm32` (time, ICS, expansion, WebAuthn) to catch Wasm-only problems such as a stray `SystemTime::now()`; `cargo clippy -- -D warnings`.
+- `build`: `trunk build --release` (into `crates/kairos-web/dist`, which includes `boot.js` and `_headers`), then the worker build.
+- `test`: `cargo test --workspace` natively; `wasm-bindgen-test` (under Node) for the pure `kairos-core` modules on `wasm32` (time, ICS, expansion, WebAuthn) to catch Wasm-only problems such as a stray `SystemTime::now()`; `cargo clippy -- -D warnings`.
 - `e2e`: builds with `--features test-hooks`, starts `wrangler dev --env e2e` plus a local mock Bark and feed server, runs the `e2e` crate.
 - `deploy`: rejects builds with `test-hooks`, runs `build`, then `wrangler deploy`, then prints `startup_time_ms`.
 
@@ -683,8 +683,8 @@ All routing happens in `hub-core::router` (`matchit` path tables per prefix), so
 | `RECOVERY_CODE`, `SESSION_SECRET` | `wrangler secret put` | Rotating `SESSION_SECRET` invalidates in-flight challenges only; rotating `RECOVERY_CODE` invalidates the old code |
 | Durable Object | binding `HUB` → class `Hub`; migration `v1` `new_sqlite_classes = ["Hub"]` | |
 | Watchdog | `[triggers] crons = ["0 */6 * * *"]` | |
-| Static assets | `assets.directory = "crates/hub-web/dist"`, `not_found_handling = "single-page-application"`, `run_worker_first = ["/api/*", "/auth/*"]` | `_headers` for CSP |
-| Schema | Forward-only migrations in `hub-core`, applied on cold start | |
+| Static assets | `assets.directory = "crates/kairos-web/dist"`, `not_found_handling = "single-page-application"`, `run_worker_first = ["/api/*", "/auth/*"]` | `_headers` for CSP |
+| Schema | Forward-only migrations in `kairos-core`, applied on cold start | |
 | Backups | Settings → export JSON / ICS | Manual |
 
 ## 18. Testing Strategy
@@ -696,7 +696,7 @@ The port design (§5.3) moves almost all testing out of the Workers runtime.
   - `wall_to_utc` round-trips for every wall time that exists, and moves forward by exactly the gap for times that do not;
   - **differential anchor test:** for generated rules (daily, weekly with `BYDAY` and `INTERVAL`, monthly `BYMONTHDAY=31`, yearly, with `COUNT`, `UNTIL`, `EXDATE`), anchored expansion equals full expansion from `DTSTART` (`budget = ∞`) over the same window.
 - **Golden recurrence tests:** the RFC 5545 §3.8.5.3 examples, so the floating-expansion wrapper around `rrule` is checked against the standard, not only against itself.
-- **Hub integration tests (native, `rusqlite` + fakes):** the whole HTTP surface through `hub_core::router`, reconciliation, the queue, the dispatch state machine, alarm arming and backoff, sync, auth flows, the watchdog. Clock, HTTP, entropy, and alarm are fakes.
+- **Hub integration tests (native, `rusqlite` + fakes):** the whole HTTP surface through `kairos_core::router`, reconciliation, the queue, the dispatch state machine, alarm arming and backoff, sync, auth flows, the watchdog. Clock, HTTP, entropy, and alarm are fakes.
 - **Hot-loop and kill tests:** for each alarm step, (a) a permanently failing and (b) a permanently panicking fake prove that the next alarm is `≥ now + 60 s` after the first error and that the trace was written; (c) a "killed" run (the fake stops the step after the trace, without its error handling) followed by a replay proves the replay does not redo the same work.
 - **WebAuthn tests:** a software authenticator (dev-dependency, using the signing halves of `p256`, `ed25519-dalek`, `rsa`) mints registration and login ceremonies for all three algorithms; one negative test per numbered check in §11.2 (wrong origin, wrong challenge, wrong purpose, `crossOrigin: true`, wrong rpIdHash, `UP` clear, trailing bytes, extensions present, unsupported algorithm, small RSA key, replayed counter, tampered signature, unknown credential, stale `rp_id`).
 - **Wasm-target tests:** the pure modules again on `wasm32` under `wasm-bindgen-test`.
@@ -714,17 +714,18 @@ The port design (§5.3) moves almost all testing out of the Workers runtime.
 - 2026-11-18: Approach A (JSON API + Leptos single-page app), with Claude's defaults below.
 - 2026-11-18 (after the builder check): a per-source "Send reminders" switch plus "No reminders" per manual/API event; a disabled source stops syncing, is hidden, and has its reminders withdrawn.
 - 2026-11-18 (after the builder check): manual events get repeat presets and "Delete this occurrence"; no per-occurrence editing in v1.
+- 2026-11-18: project name **Kairos** (Greek for "the right moment"); directory `kairos/`; crates `kairos-*`; Worker `kairos`; API token prefix `kr_`. The Durable Object keeps the role name `Hub` / binding `HUB`.
 
 **Defaults chosen by Claude (revisable)**
 - Product (carried over): manual events in the web UI; 60-day reminder window; 90-day history; default lead 15 min; all-day reminders at 09:00 with no lead times; week starts Monday; English UI; sync every 30 min (minimum 15), 5 MB cap, alert after 3 consecutive failures; 1 initial attempt + 3 retries (+1/+5/+15 min); late threshold 2 min; skip if the event already started; API tokens read all events but write only `api` events; the recovery code gates first-time setup and stays valid until rotated; better a rare duplicate than a missed reminder; queue (10 series per wake), anchor + 2,000-slot budget, per-step isolation with 1 → 15 min backoff; UV preferred, not required; confirmation before revoking the last key; cancelled instances become EXDATEs; no `RDATE`.
-- Rust stack: Leptos CSR (Dioxus as fallback); `hub-core` behind ports, tested natively on `rusqlite`; in-house WebAuthn verification on RustCrypto crates (ES256, EdDSA, RS256; no attestation); `jiff` for zone conversion, `rrule` in floating time for recurrence, `ical` for parsing; `matchit` router inside `hub-core`; `--panic-unwind` with per-step `catch_unwind`; strict lints against panics and wall-clock reads; `chromiumoxide` for end-to-end tests; `cargo xtask` as the build driver.
+- Rust stack: Leptos CSR (Dioxus as fallback); `kairos-core` behind ports, tested natively on `rusqlite`; in-house WebAuthn verification on RustCrypto crates (ES256, EdDSA, RS256; no attestation); `jiff` for zone conversion, `rrule` in floating time for recurrence, `ical` for parsing; `matchit` router inside `kairos-core`; `--panic-unwind` with per-step `catch_unwind`; strict lints against panics and wall-clock reads; `chromiumoxide` for end-to-end tests; `cargo xtask` as the build driver.
 - New in this revision: pessimistic progress traces before risky work (Invariant 2); source alerts as their own step (`sources.alerted`); a 6-hourly watchdog cron for lost alarms; CSP as a real HTTP header via `_headers`; the browser does no zone math.
 
 ## 20. Left to the Builder / Open Risks
 
 - **Verify early (first plan task, a spike):** the `transactionSync` and `sync()` bindings (§5.4); `--panic-unwind` building with the chosen crates; `getrandom` backend; `jiff` + `chrono-tz` startup time; Leptos + Trunk with `inject_scripts = false`; `_headers` applied to SPA-fallback responses.
 - DO CPU limit on Free and the cost of parsing the largest real feed (§3 ⚠️1).
-- Whether `webauthn-rs-proto`'s types fit both sides, or hand-written DTOs in `hub-types` are simpler.
+- Whether `webauthn-rs-proto`'s types fit both sides, or hand-written DTOs in `kairos-types` are simpler.
 - `rrule` behaviour on edge rules versus RFC 5545 (covered by the golden tests; a mismatch is fixed in our wrapper or upstream).
 - UI styling and component structure; Leptos bundle size (static assets are free, but first load is slower than a JS SPA).
 - If a real feed relies on `RDATE`, it is a candidate for v1.1.
@@ -735,7 +736,7 @@ The port design (§5.3) moves almost all testing out of the Workers runtime.
 - **2026-11-17 — product scope approved** (Chinese discussion; translated to English).
 - **2026-11-17 — architecture revision after plan review** (TypeScript design, `2026-11-17-design.md` §21): hot-loop prevention, DST gap rule, cancelled instances, expansion anchor and budget, retry count, bounded queue, passkey rename and last-key confirmation, consistent UV settings, schedule vs history, status line.
 - **2026-11-18 — re-based on an all-Rust stack** (this document):
-  1. Stack: Rust workspace (`hub-core`, `hub-worker`, `hub-web`, `hub-types`, `xtask`, `e2e`); Leptos SPA; ports for DB, clock, entropy, HTTP, alarm, commit (§4.2, §5).
+  1. Stack: Rust workspace (`kairos-core`, `kairos-worker`, `kairos-web`, `kairos-types`, `xtask`, `e2e`); Leptos SPA; ports for DB, clock, entropy, HTTP, alarm, commit (§4.2, §5).
   2. Platform gaps closed: own `transactionSync` binding; `--panic-unwind` with per-step `catch_unwind`; no wall-clock reads in Wasm (§3, §5.4).
   3. WebAuthn verification implemented in-house, with every check listed (§11.2); `passkeys.alg` column.
   4. Time zones via `jiff` (`Compatible`), recurrence via `rrule` in floating time (§7.4, §8).
