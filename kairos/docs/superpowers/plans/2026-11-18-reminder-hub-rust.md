@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** planned, not started (2026-11-18). No code exists yet. Do not start implementation until the user picks an execution method.
+**Status:** Task 1 verified on `feat/kairos-impl` (2026-11-18). The five foundation tests passed against bundled SQLite and workspace Clippy passed. Tasks 2–17 are pending.
 
 **Goal:** Build the single-user reminder hub specified in the design (ICS feeds + API + manual events → Bark reminders from a self-arming Durable Object alarm, passkey-protected web UI) entirely in Rust on Cloudflare Workers.
 
@@ -253,7 +253,7 @@ pub struct FakeHttp;  impl FakeHttp {
 **Interfaces:**
 - Produces: everything in "Shared core types" and "Test harness" above; `MIGRATIONS: &[&str]` (migration 1 = **exactly** the DDL in §6.2, including `sources.alerted`, `sources.notify`, `passkeys.alg`); `Settings { timezone: String, default_lead_min: u32, all_day_time: String }` with defaults `UTC`, `15`, `09:00`; `get_settings(db) / put_settings(db, &Settings)`; `get_meta(db, key) -> Option<String>` / `set_meta(db, key, value)` / `del_meta(db, key)` (keys stored as `meta:<key>`); in `sched/alarm.rs`: `Floor { Http, AlarmClean, AlarmError }` (`Http`: normal floor, error streak untouched; `AlarmClean`: normal floor, streak reset to 0; `AlarmError`: streak + 1, error floor), `AlarmReport { step_errors: Vec<(String, String)>, top_level_error: Option<String> }`, `StepOutcome { ok: u32, failed: u32, step_error: Option<String> }`; `xtask test` = `cargo test --workspace` + `cargo clippy --workspace --all-targets -- -D warnings`.
 
-- [ ] **Step 1: Write the failing tests** in `crates/kairos-testkit/tests/foundation.rs`
+- [x] **Step 1: Write the failing tests** in `crates/kairos-testkit/tests/foundation.rs`
 
 ```rust
 #[tokio::test] async fn migration_creates_all_tables_and_is_idempotent() {
@@ -288,14 +288,14 @@ pub struct FakeHttp;  impl FakeHttp {
 }
 ```
 
-- [ ] **Step 2: Run** `cargo test -p kairos-testkit --test foundation` — Expected: FAIL (crates do not exist / do not compile).
-- [ ] **Step 3: Implement** the workspace and the listed modules.
+- [x] **Step 2: Run** `cargo test -p kairos-testkit --test foundation` — Expected: FAIL (crates do not exist / do not compile).
+- [x] **Step 3: Implement** the workspace and the listed modules.
   - `Hub::handle` wraps routing in `AssertUnwindSafe(..).catch_unwind()` (`futures::FutureExt`); a panic becomes `500 {"error":"internal"}` and is logged.
   - `migrate` reads `meta:schema_version` (absent = 0) and applies `MIGRATIONS[v..]` in order, each inside `Db::transaction`, then writes the new version.
   - `rearm` and `run_alarm` are stubs in this task (`rearm` does nothing; `run_alarm` returns an empty report); Task 9 replaces them.
   - `SqliteDb` (testkit) implements `Db::transaction` with a real `BEGIN`/`COMMIT`/`ROLLBACK`; nested calls are not needed and return `CoreError::Internal`.
-- [ ] **Step 4: Run** `cargo xtask test` — Expected: PASS, clippy clean.
-- [ ] **Step 5: Commit** — `feat: workspace, core ports, schema migration 1 and router`
+- [x] **Step 4: Run** `cargo xtask test` — Expected: PASS, clippy clean.
+- [x] **Step 5: Commit** — `feat: workspace, core ports, schema migration 1 and router`
 
 ---
 
