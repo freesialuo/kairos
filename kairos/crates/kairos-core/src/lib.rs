@@ -35,3 +35,7 @@ impl<P: Ports> Hub<P> {
         db::schema::migrate(&self.db)
     }
 }
+
+pub mod ics {
+    pub mod expand;
+}
