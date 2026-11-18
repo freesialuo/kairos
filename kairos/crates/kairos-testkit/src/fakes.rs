@@ -5,8 +5,9 @@ use kairos_core::{
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
-    future::pending,
+    future::{pending, poll_fn},
     rc::Rc,
+    task::Poll,
 };
 
 #[derive(Default)]
@@ -16,6 +17,7 @@ struct FaultState {
     kill: Option<String>,
     halt: bool,
     commit_error: bool,
+    yield_commit: bool,
 }
 
 /// Faults persist until replaced. A simulated kill affects only the next I/O
@@ -34,6 +36,9 @@ impl Faults {
     }
     pub fn fail_next_commit(&self) {
         self.0.borrow_mut().commit_error = true;
+    }
+    pub fn yield_next_commit(&self) {
+        self.0.borrow_mut().yield_commit = true;
     }
     pub(crate) fn before_sql(&self, sql: &str) -> Result<(), DbError> {
         let state = self.0.borrow();
@@ -103,6 +108,16 @@ impl Commit for FakeCommit {
     async fn commit_point(&self) -> Result<(), CoreError> {
         self.0.boundary().await;
         let Faults(state) = &self.0;
+        let mut should_yield = std::mem::take(&mut state.borrow_mut().yield_commit);
+        poll_fn(|cx| {
+            if std::mem::take(&mut should_yield) {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            } else {
+                Poll::Ready(())
+            }
+        })
+        .await;
         if std::mem::take(&mut state.borrow_mut().commit_error) {
             Err(DbError("injected commit failure".into()).into())
         } else {

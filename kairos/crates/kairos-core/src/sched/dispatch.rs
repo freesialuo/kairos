@@ -1,4 +1,4 @@
-use super::alarm::StepOutcome;
+use super::{alarm::StepOutcome, queue::REMINDER_SCHEDULE_READY};
 use crate::{
     CoreError, Db, Hub, Ports,
     db::settings::get_settings,
@@ -16,6 +16,9 @@ pub const DISPATCH_BATCH: usize = 20;
 pub const MAX_ATTEMPTS: u32 = 4;
 pub const LATE_THRESHOLD_MS: i64 = 120_000;
 pub const STARTED_GRACE_MS: i64 = 120_000;
+
+const CURRENT_ATTEMPT: &str = "key=?1 AND attempts=?2 AND fire_at=?3 AND next_attempt_at=?4
+    AND event_id=?5 AND occ_start_utc=?6 AND reminders.status='pending'";
 
 pub fn retry_delay_ms(attempt: u32) -> i64 {
     match attempt {
@@ -37,8 +40,21 @@ enum Outcome {
     Sent,
     Skipped,
     Gone,
+    Superseded,
+    Deferred,
     Failed(String),
     Retry(String),
+}
+
+fn attempt_identity(trace: &Row) -> Result<[Value; 6], CoreError> {
+    Ok([
+        Value::Text(trace.text("key")?),
+        Value::Integer(trace.i64("attempts")?),
+        Value::Integer(trace.i64("fire_at")?),
+        Value::Integer(trace.i64("next_attempt_at")?),
+        Value::Integer(trace.i64("event_id")?),
+        Value::Integer(trace.i64("occ_start_utc")?),
+    ])
 }
 
 async fn deliver<P: Ports>(
@@ -49,18 +65,24 @@ async fn deliver<P: Ports>(
 ) -> Result<Outcome, CoreError> {
     let event_id = trace.i64("event_id")?;
     let events = hub.db.exec(
-        "SELECT e.title,e.location,e.all_day,e.duration_sec,e.tzid,s.name AS source,
-         s.notify,s.enabled FROM events e LEFT JOIN sources s ON s.id=e.source_id
-         WHERE e.id=?1 AND e.series_key=?2",
-        &[
-            Value::Integer(event_id),
-            Value::Text(trace.text("series_key")?),
-        ],
+        &format!(
+            "SELECT e.id AS existing_event_id,e.title,e.location,e.all_day,e.duration_sec,e.tzid,
+         s.name AS source,s.notify,s.enabled,({REMINDER_SCHEDULE_READY}) AS schedule_ready FROM reminders
+         LEFT JOIN events e ON e.id=reminders.event_id AND e.series_key=reminders.series_key
+         LEFT JOIN sources s ON s.id=e.source_id WHERE {CURRENT_ATTEMPT}"
+        ),
+        &attempt_identity(trace)?,
     )?;
     let Some(event) = events.first() else {
-        return Ok(Outcome::Gone);
+        return Ok(Outcome::Superseded);
     };
-    if event.opt_i64("notify")? == Some(0) || event.opt_i64("enabled")? == Some(0) {
+    if !event.bool("schedule_ready")? {
+        return Ok(Outcome::Deferred);
+    }
+    if event.opt_i64("existing_event_id")?.is_none()
+        || event.opt_i64("notify")? == Some(0)
+        || event.opt_i64("enabled")? == Some(0)
+    {
         return Ok(Outcome::Gone);
     }
     let attempt = trace.i64("attempts")?;
@@ -78,13 +100,15 @@ async fn deliver<P: Ports>(
         let local = utc_to_wall(start, &zone).map_err(|e| CoreError::Internal(e.to_string()))?;
         let days = event.i64("duration_sec")? / 86_400;
         let end = local
+            .date()
             .checked_add(
                 jiff::Span::new()
                     .try_days(days)
                     .map_err(|e| CoreError::Internal(e.to_string()))?,
             )
             .map_err(|e| CoreError::Internal(e.to_string()))?;
-        now >= wall_to_utc(end, &zone).map_err(|e| CoreError::Internal(e.to_string()))?
+        now >= wall_to_utc(end.at(0, 0, 0, 0), &zone)
+            .map_err(|e| CoreError::Internal(e.to_string()))?
     } else {
         already_started(start, false, 0, now)
     };
@@ -128,13 +152,12 @@ fn record(
 ) -> Result<(), CoreError> {
     let key = trace.text("key")?;
     let attempt = trace.i64("attempts")?;
-    let params = [
-        Value::Text(key.clone()),
-        Value::Integer(attempt),
-        Value::Integer(trace.i64("fire_at")?),
-    ];
+    let mut params = attempt_identity(trace)?.to_vec();
     if matches!(outcome, Outcome::Gone) {
-        db.exec("DELETE FROM reminders WHERE key=?1 AND attempts=?2 AND fire_at=?3 AND status='pending'", &params)?;
+        db.exec(
+            &format!("DELETE FROM reminders WHERE {CURRENT_ATTEMPT}"),
+            &params,
+        )?;
         return Ok(());
     }
     let (status, error) = match outcome {
@@ -142,22 +165,19 @@ fn record(
         Outcome::Skipped => ("skipped", Some("event already started".into())),
         Outcome::Retry(e) if attempt < i64::from(MAX_ATTEMPTS) => ("pending", Some(e)),
         Outcome::Retry(e) | Outcome::Failed(e) => ("failed", Some(e)),
-        Outcome::Gone => return Ok(()),
+        Outcome::Gone | Outcome::Superseded | Outcome::Deferred => return Ok(()),
     };
     let error = error.map_or(Value::Null, Value::Text);
     let ok = status == "sent";
+    params.extend([
+        Value::Text(status.into()),
+        error.clone(),
+        if ok { Value::Integer(now) } else { Value::Null },
+        Value::Integer(i64::from(late)),
+    ]);
     db.exec(
-        "UPDATE reminders SET status=?4,last_error=?5,sent_at=?6,late=?7
-        WHERE key=?1 AND attempts=?2 AND fire_at=?3 AND status='pending'",
-        &[
-            params[0].clone(),
-            params[1].clone(),
-            params[2].clone(),
-            Value::Text(status.into()),
-            error.clone(),
-            if ok { Value::Integer(now) } else { Value::Null },
-            Value::Integer(i64::from(late)),
-        ],
+        &format!("UPDATE reminders SET status=?7,last_error=?8,sent_at=?9,late=?10 WHERE {CURRENT_ATTEMPT}"),
+        &params,
     )?;
     db.exec(
         "INSERT INTO deliveries(at,reminder_key,kind,channel,ok,error,summary)
@@ -173,22 +193,45 @@ fn record(
     Ok(())
 }
 
+fn release_unattempted_trace(db: &impl Db, trace: &Row, before: &Row) -> Result<(), CoreError> {
+    let mut params = attempt_identity(trace)?.to_vec();
+    params.extend([
+        Value::Integer(before.i64("next_attempt_at")?),
+        before
+            .opt_text("last_error")?
+            .map_or(Value::Null, Value::Text),
+    ]);
+    db.exec(
+        &format!(
+            "UPDATE reminders SET attempts=attempts-1,next_attempt_at=?7,last_error=?8
+                  WHERE {CURRENT_ATTEMPT}"
+        ),
+        &params,
+    )?;
+    Ok(())
+}
+
 pub async fn dispatch_due<P: Ports>(hub: &Hub<P>, now: i64) -> StepOutcome {
     let mut step = StepOutcome::default();
     let work = async {
         let due = hub.db.exec(
-            "SELECT key,attempts FROM reminders WHERE status='pending' AND next_attempt_at<=?1
-            ORDER BY next_attempt_at,key LIMIT ?2",
+            &format!(
+                "SELECT key,attempts,next_attempt_at,last_error FROM reminders
+             WHERE status='pending' AND next_attempt_at<=?1 AND {REMINDER_SCHEDULE_READY}
+             ORDER BY next_attempt_at,key LIMIT ?2"
+            ),
             &[Value::Integer(now), Value::Integer(DISPATCH_BATCH as i64)],
         )?;
         for item in due {
             let attempts = u32::try_from(item.i64("attempts")?)
                 .map_err(|e| CoreError::Internal(e.to_string()))?;
-            let trace = hub.db.exec("UPDATE reminders SET attempts=attempts+1,next_attempt_at=?2,last_error='interrupted'
-                WHERE key=?1 AND status='pending' AND next_attempt_at<=?3 AND attempts=?4
-                RETURNING key,attempts,fire_at,event_id,series_key,occ_start_utc", &[
+            let trace = hub.db.exec(&format!("UPDATE reminders SET attempts=attempts+1,next_attempt_at=?2,last_error='interrupted'
+                WHERE key=?1 AND status='pending' AND next_attempt_at=?3 AND attempts=?4
+                AND last_error IS ?5 AND {REMINDER_SCHEDULE_READY}
+                RETURNING key,attempts,fire_at,next_attempt_at,event_id,occ_start_utc"), &[
                 Value::Text(item.text("key")?),Value::Integer(now.saturating_add(retry_delay_ms(attempts.saturating_add(1)))),
-                Value::Integer(now),Value::Integer(i64::from(attempts))])?;
+                Value::Integer(item.i64("next_attempt_at")?),Value::Integer(i64::from(attempts)),
+                item.opt_text("last_error")?.map_or(Value::Null, Value::Text)])?;
             let Some(trace) = trace.first() else {
                 continue;
             };
@@ -202,6 +245,13 @@ pub async fn dispatch_due<P: Ports>(hub: &Hub<P>, now: i64) -> StepOutcome {
                 Ok(Err(e)) => Outcome::Retry(e.to_string()),
                 Err(_) => Outcome::Retry("panic during reminder delivery".into()),
             };
+            if matches!(outcome, Outcome::Superseded) {
+                continue;
+            }
+            if matches!(outcome, Outcome::Deferred) {
+                release_unattempted_trace(&hub.db, trace, &item)?;
+                continue;
+            }
             if matches!(outcome, Outcome::Failed(_) | Outcome::Retry(_)) {
                 step.failed += 1;
             } else {

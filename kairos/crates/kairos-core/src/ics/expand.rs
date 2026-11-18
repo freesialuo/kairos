@@ -62,20 +62,30 @@ pub fn expand_series(
     user_tz: &str,
     opts: &ExpandOpts,
 ) -> ExpandResult {
+    expand_with_event_windows(rows, user_tz, opts.budget, |_, _| {
+        (from_utc..to_utc, opts.anchor_before_utc)
+    })
+}
+
+pub(crate) fn expand_with_event_windows(
+    rows: &[StoredEvent],
+    user_tz: &str,
+    budget: Budget,
+    window_for: impl Fn(&StoredEvent, &str) -> (std::ops::Range<i64>, Option<i64>),
+) -> ExpandResult {
     let mut result = ExpandResult {
         occurrences: Vec::new(),
         anchor: None,
         status: ExpandStatus::Complete,
         warning: None,
     };
-    if from_utc >= to_utc {
-        return result;
-    }
-
-    let window = from_utc..to_utc;
     let parent = rows.iter().find(|event| event.row.recurrence_id.is_none());
     if let Some(parent) = parent {
         let zone = parent.row.tzid.as_deref().unwrap_or(user_tz);
+        let (window, anchor_before_utc) = window_for(parent, zone);
+        if window.is_empty() {
+            return result;
+        }
         let suppressed: HashSet<_> = parent
             .row
             .exdates
@@ -91,11 +101,15 @@ pub fn expand_series(
         if let Some(rule) = parent.row.rrule.as_deref() {
             match recurrence_set(parent, rule, zone) {
                 Ok((set, date_only, until_utc)) => {
+                    let opts = ExpandOpts {
+                        anchor_before_utc,
+                        budget,
+                    };
                     let recurrence = Recurrence {
                         event: parent,
                         zone,
                         window: &window,
-                        opts,
+                        opts: &opts,
                         date_only,
                         until_utc,
                         suppressed: &suppressed,
@@ -120,7 +134,7 @@ pub fn expand_series(
     result.occurrences.extend(rows.iter().filter_map(|event| {
         let slot = event.row.recurrence_id.as_deref()?;
         let zone = event.row.tzid.as_deref().unwrap_or(user_tz);
-        single_occurrence(event, slot, zone, &window)
+        single_occurrence(event, slot, zone, &window_for(event, zone).0)
     }));
     result
         .occurrences

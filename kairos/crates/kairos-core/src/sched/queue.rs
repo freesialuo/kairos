@@ -21,9 +21,19 @@ pub enum SeriesFilter {
     All,
 }
 
-const UPSERT: &str = "ON CONFLICT(series_key) DO UPDATE SET reason=excluded.reason,
+// Daily rolls add horizon coverage without invalidating the existing schedule.
+// Catch-up passes retain any invalidation that was already queued.
+pub(super) const REMINDER_SCHEDULE_READY: &str = "NOT EXISTS (
+    SELECT 1 FROM reconcile_queue q WHERE q.series_key=reminders.series_key
+    AND q.reason NOT IN ('roll','catch_up'))";
+
+const UPSERT: &str = "ON CONFLICT(series_key) DO UPDATE SET reason=CASE
+    WHEN excluded.reason='catch_up' AND reconcile_queue.reason<>'roll' THEN reconcile_queue.reason
+    ELSE excluded.reason END,
     enqueued_at=MIN(enqueued_at,excluded.enqueued_at), attempts=0,
-    not_before=MIN(not_before,excluded.not_before), last_error=NULL";
+    not_before=MIN(not_before,excluded.not_before), last_error=NULL WHERE excluded.reason<>'roll'";
+
+const CURRENT_ATTEMPT: &str = "series_key=?1 AND attempts=?2 AND not_before=?3";
 
 pub fn enqueue_series(db: &impl Db, key: &str, reason: &str, now: i64) -> Result<(), CoreError> {
     db.exec(
@@ -86,31 +96,52 @@ pub async fn process_queue<P: Ports>(hub: &Hub<P>, now: i64) -> StepOutcome {
     let mut result = StepOutcome::default();
     let run = async {
         let items = hub.db.exec(
-            "SELECT series_key,attempts FROM reconcile_queue WHERE not_before<=?1
+            "SELECT series_key,attempts,not_before FROM reconcile_queue WHERE not_before<=?1
             ORDER BY not_before,enqueued_at,series_key LIMIT ?2",
             &[Value::Integer(now), Value::Integer(QUEUE_BATCH as i64)],
         )?;
         for item in items {
             let key = item.text("series_key")?;
             let attempts = item.i64("attempts")?;
+            let before = [
+                Value::Text(key.clone()),
+                Value::Integer(attempts),
+                Value::Integer(item.i64("not_before")?),
+            ];
             if attempts >= 3 {
                 // A kill during the final attempt left the committed trace but no failure handler.
-                hub.db.transaction(|db| discard(db, &key, "interrupted"))?;
-                result.failed += 1;
+                let discarded = hub
+                    .db
+                    .transaction(|db| discard(db, &key, "interrupted", now, &before))?;
+                result.failed += u32::from(discarded);
                 continue;
             }
             let attempt = attempts + 1;
             let backoff = now.saturating_add((1_i64 << attempt.clamp(0, 3)) * 60_000);
-            let trace = hub.db.exec("UPDATE reconcile_queue SET attempts=attempts+1, not_before=?2,last_error='interrupted'
-                WHERE series_key=?1 AND not_before<=?3 AND attempts=?4 RETURNING 1",
-                &[Value::Text(key.clone()),Value::Integer(backoff),Value::Integer(now),Value::Integer(attempts)])?;
+            let mut claim = before.to_vec();
+            claim.push(Value::Integer(backoff));
+            let trace = hub.db.exec(&format!("UPDATE reconcile_queue SET attempts=attempts+1, not_before=?4,last_error='interrupted'
+                WHERE {CURRENT_ATTEMPT} RETURNING 1"), &claim)?;
             if trace.is_empty() {
                 continue;
             }
             hub.commit.commit_point().await?;
+            let current = [
+                Value::Text(key.clone()),
+                Value::Integer(attempt),
+                Value::Integer(backoff),
+            ];
             // Commit the computed reminders and removal/replacement of their queue item together.
             let work = catch_unwind(AssertUnwindSafe(|| {
                 hub.db.transaction(|db| {
+                    // A newer edit can reset this job while the trace is committing.
+                    let owned = db.exec(
+                        &format!("SELECT 1 FROM reconcile_queue WHERE {CURRENT_ATTEMPT}"),
+                        &current,
+                    )?;
+                    if owned.is_empty() {
+                        return Ok(false);
+                    }
                     let outcome = reconcile_series(db, &key, now)?;
                     if outcome != ReconcileOutcome::Done(ExpandStatus::CatchingUp) {
                         db.exec(
@@ -118,12 +149,12 @@ pub async fn process_queue<P: Ports>(hub: &Hub<P>, now: i64) -> StepOutcome {
                             &[Value::Text(key.clone())],
                         )?;
                     }
-                    Ok(())
+                    Ok(true)
                 })
             }));
             let failure = match work {
-                Ok(Ok(())) => {
-                    result.ok += 1;
+                Ok(Ok(reconciled)) => {
+                    result.ok += u32::from(reconciled);
                     continue;
                 }
                 Ok(Err(e)) => e.to_string(),
@@ -131,7 +162,8 @@ pub async fn process_queue<P: Ports>(hub: &Hub<P>, now: i64) -> StepOutcome {
             };
             result.failed += 1;
             if attempt >= 3 {
-                hub.db.transaction(|db| discard(db, &key, &failure))?;
+                hub.db
+                    .transaction(|db| discard(db, &key, &failure, now, &current))?;
             } else {
                 hub.db.exec(
                     "UPDATE reconcile_queue SET last_error=?2 WHERE series_key=?1",
@@ -150,17 +182,39 @@ pub async fn process_queue<P: Ports>(hub: &Hub<P>, now: i64) -> StepOutcome {
     result
 }
 
-fn discard(db: &impl Db, key: &str, message: &str) -> Result<(), CoreError> {
+fn discard(
+    db: &impl Db,
+    key: &str,
+    message: &str,
+    now: i64,
+    attempt: &[Value; 3],
+) -> Result<bool, CoreError> {
+    let discarded = db.exec(
+        &format!("DELETE FROM reconcile_queue WHERE {CURRENT_ATTEMPT} RETURNING reason"),
+        attempt,
+    )?;
+    let Some(discarded) = discarded.first() else {
+        return Ok(false);
+    };
     db.exec(
-        "UPDATE events SET expand_warning=?2 WHERE series_key=?1 AND recurrence_id IS NULL",
+        "UPDATE events SET expand_warning=?2 WHERE series_key=?1",
         &[
             Value::Text(key.into()),
             Value::Text(format!("Reminder recomputation failed: {message}")),
         ],
     )?;
-    db.exec(
-        "DELETE FROM reconcile_queue WHERE series_key=?1",
-        &[Value::Text(key.into())],
-    )?;
-    Ok(())
+    if !matches!(discarded.text("reason")?.as_str(), "roll" | "catch_up") {
+        // A failed invalidation cannot make the old schedule eligible again.
+        db.exec(
+            "INSERT INTO deliveries(at,reminder_key,kind,channel,ok,error,summary)
+             SELECT ?2,key,'reminder','bark',0,'withdrawn: reminder recomputation failed',key
+             FROM reminders WHERE series_key=?1 AND status='pending' AND attempts>0",
+            &[Value::Text(key.into()), Value::Integer(now)],
+        )?;
+        db.exec(
+            "DELETE FROM reminders WHERE series_key=?1 AND status='pending'",
+            &[Value::Text(key.into())],
+        )?;
+    }
+    Ok(true)
 }

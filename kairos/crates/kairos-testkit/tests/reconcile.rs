@@ -161,6 +161,44 @@ fn all_day_first_date_at_nine_and_mute_withdraws_it() {
     assert!(h.sql("SELECT * FROM reminders").is_empty());
 }
 
+#[test]
+fn ongoing_all_day_occurrences_remain_eligible_after_midnight() {
+    for rule in [None, Some("FREQ=DAILY;COUNT=1".into())] {
+        let h = TestHub::new();
+        let mut row = event("manual:holiday");
+        row.origin = Origin::Manual;
+        row.start_local = "2026-11-01".into();
+        row.tzid = Some("America/New_York".into());
+        row.all_day = true;
+        row.duration_sec = 86_400;
+        row.rrule = rule;
+        h.set_now("2026-11-01T11:00:00Z");
+        upsert_event(&h.db, &row, h.now()).unwrap();
+
+        reconcile(&h, &row.series_key);
+        let pending = h.sql("SELECT status, fire_at FROM reminders");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].i64("fire_at").unwrap(),
+            ms("2026-11-01T14:00:00Z")
+        );
+
+        // This fall-back day lasts 25 hours, and a pending retry can still be sent.
+        h.set_now("2026-11-02T04:30:00Z");
+        reconcile(&h, &row.series_key);
+        assert_eq!(
+            h.sql("SELECT status FROM reminders")[0]
+                .text("status")
+                .unwrap(),
+            "pending"
+        );
+
+        h.set_now("2026-11-02T05:00:00Z");
+        reconcile(&h, &row.series_key);
+        assert!(h.sql("SELECT status FROM reminders").is_empty());
+    }
+}
+
 #[tokio::test]
 async fn queue_drains_ten_per_call_and_enqueues_each_series_once() {
     let h = TestHub::new();
@@ -238,6 +276,37 @@ async fn queue_trace_survives_kill_and_failure_warning_survives_drop() {
             .starts_with("Reminder recomputation failed:")
     );
     assert!(h.sql("SELECT * FROM reminders").is_empty());
+}
+
+#[tokio::test]
+async fn failed_schedule_invalidation_withdraws_pending_reminders_but_daily_roll_keeps_them() {
+    for (reason, withdraws) in [("settings", true), ("roll", false)] {
+        let h = TestHub::new();
+        let key = "api:reminder";
+        upsert_event(&h.db, &event(key), h.now()).unwrap();
+        reconcile(&h, key);
+        h.sql("UPDATE reminders SET attempts=1");
+        enqueue_series(&h.db, key, reason, h.now()).unwrap();
+        h.faults()
+            .fail_sql_matching("SELECT key,value FROM settings WHERE key IN");
+        for delay_min in [0, 2, 4] {
+            h.advance_min(delay_min);
+            assert_eq!(process_queue(&h, h.now()).await.failed, 1);
+        }
+
+        assert_eq!(queue_length(&h.db).unwrap(), 0);
+        assert_eq!(h.sql("SELECT key FROM reminders").is_empty(), withdraws);
+        assert!(load_series(&h.db, key).unwrap()[0].expand_warning.is_some());
+        let deliveries = h.sql("SELECT error FROM deliveries");
+        if withdraws {
+            assert_eq!(
+                deliveries[0].text("error").unwrap(),
+                "withdrawn: reminder recomputation failed"
+            );
+        } else {
+            assert!(deliveries.is_empty());
+        }
+    }
 }
 
 #[tokio::test]

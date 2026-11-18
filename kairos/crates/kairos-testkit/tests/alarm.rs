@@ -55,8 +55,8 @@ async fn error_floor_grows_resets_and_http_preserves_streak() {
 #[tokio::test]
 async fn selection_error_or_panic_is_isolated_and_sets_floor() {
     for fault in [
-        "SELECT key,attempts FROM reminders",
-        "SELECT series_key,attempts FROM reconcile_queue",
+        "SELECT key,attempts,next_attempt_at,last_error FROM reminders",
+        "SELECT series_key,attempts,not_before FROM reconcile_queue",
         "SELECT * FROM sources WHERE enabled = 1",
         "SELECT id FROM sources WHERE consecutive_failures >= 3",
         "DELETE FROM auth_failures",

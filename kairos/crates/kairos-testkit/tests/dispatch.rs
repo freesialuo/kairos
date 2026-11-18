@@ -1,10 +1,18 @@
 use futures::FutureExt;
 use kairos_core::{
     Db,
-    calendar::{events::upsert_event, reconcile::reconcile_series},
+    calendar::{
+        events::{load_series, upsert_event},
+        reconcile::reconcile_series,
+    },
+    db::settings::set_meta,
     ics::parse::parse_ics,
     ports::Value,
-    sched::dispatch::dispatch_due,
+    sched::{
+        alarm::compute_next_alarm,
+        dispatch::dispatch_due,
+        queue::{enqueue_series, process_queue},
+    },
 };
 use kairos_testkit::{NOW, TestHub, ms};
 
@@ -129,6 +137,115 @@ async fn interruption_before_send_defers_replay() {
     respond(&h, true);
     dispatch_due(&h, h.now()).await;
     assert_eq!(h.http().requests().len(), 1);
+    assert_eq!(status(&h), "sent");
+}
+
+#[tokio::test]
+async fn event_edit_during_commit_cancels_the_old_send() {
+    for mute in [false, true] {
+        let h = scenario("20261120T080000Z", true, 3600);
+        let now = h.now();
+        respond(&h, true);
+        h.faults().yield_next_commit();
+        let mut dispatch = std::pin::pin!(dispatch_due(&h, now));
+        assert!(futures::poll!(dispatch.as_mut()).is_pending());
+
+        let key = "ics:1:one";
+        let mut row = load_series(&h.db, key).unwrap().remove(0).row;
+        if mute {
+            row.lead_minutes = Some(vec![]);
+        } else {
+            row.start_local = "2026-11-20T10:00:00".into();
+        }
+        h.db.transaction(|db| {
+            upsert_event(db, &row, now)?;
+            reconcile_series(db, key, now)?;
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(dispatch.await.step_error, None);
+        assert!(h.http().requests().is_empty());
+        let scheduled = h.sql("SELECT status, attempts, fire_at FROM reminders");
+        if mute {
+            assert!(scheduled.is_empty());
+        } else {
+            assert_eq!(scheduled[0].text("status").unwrap(), "pending");
+            assert_eq!(scheduled[0].i64("attempts").unwrap(), 0);
+            assert_eq!(
+                scheduled[0].i64("fire_at").unwrap(),
+                ms("2026-11-20T10:00:00Z")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn queued_feed_change_defers_dispatch_until_recomputed() {
+    let h = scenario("20261120T080000Z", true, 3600);
+    let now = h.now();
+    let key = "ics:1:one";
+    set_meta(&h.db, "last_maintenance_at", &now.to_string()).unwrap();
+    let mut row = load_series(&h.db, key).unwrap().remove(0).row;
+    row.start_local = "2026-11-20T10:00:00".into();
+    h.db.transaction(|db| {
+        upsert_event(db, &row, now)?;
+        enqueue_series(db, key, "sync", now)?;
+        Ok(())
+    })
+    .unwrap();
+    let queue_due = now + 120_000;
+    h.db.exec(
+        "UPDATE reconcile_queue SET not_before=?1",
+        &[Value::Integer(queue_due)],
+    )
+    .unwrap();
+    enqueue_series(&h.db, key, "roll", now).unwrap();
+
+    assert_eq!(compute_next_alarm(&h.db, now).unwrap(), queue_due);
+    assert_eq!(dispatch_due(&h, now).await.ok, 0);
+    assert!(h.http().requests().is_empty());
+    assert_eq!(
+        h.sql("SELECT attempts FROM reminders")[0]
+            .i64("attempts")
+            .unwrap(),
+        0
+    );
+
+    h.advance_min(2);
+    assert_eq!(process_queue(&h, h.now()).await.ok, 1);
+    assert_eq!(
+        compute_next_alarm(&h.db, h.now()).unwrap(),
+        ms("2026-11-20T10:00:00Z")
+    );
+    h.set_now("2026-11-20T10:00:00Z");
+    respond(&h, true);
+    assert_eq!(dispatch_due(&h, h.now()).await.ok, 1);
+    assert_eq!(h.http().requests().len(), 1);
+    assert_eq!(status(&h), "sent");
+}
+
+#[tokio::test]
+async fn queued_settings_edit_during_commit_preserves_an_unchanged_reminder() {
+    let h = scenario("20261120T080000Z", true, 3600);
+    let now = h.now();
+    let key = "ics:1:one";
+    respond(&h, true);
+    enqueue_series(&h.db, key, "roll", now).unwrap();
+    h.faults().yield_next_commit();
+    let mut dispatch = std::pin::pin!(dispatch_due(&h, now));
+    assert!(futures::poll!(dispatch.as_mut()).is_pending());
+    enqueue_series(&h.db, key, "settings", now).unwrap();
+    assert_eq!(dispatch.await.step_error, None);
+    assert!(h.http().requests().is_empty());
+    let reminder = &h.sql("SELECT attempts,next_attempt_at,last_error FROM reminders")[0];
+    assert_eq!(reminder.i64("attempts").unwrap(), 0);
+    assert_eq!(reminder.i64("next_attempt_at").unwrap(), now);
+    assert_eq!(reminder.opt_text("last_error").unwrap(), None);
+    assert!(h.sql("SELECT * FROM deliveries").is_empty());
+
+    assert_eq!(process_queue(&h, now).await.ok, 1);
+    assert_eq!(dispatch_due(&h, now).await.ok, 1);
     assert_eq!(status(&h), "sent");
 }
 

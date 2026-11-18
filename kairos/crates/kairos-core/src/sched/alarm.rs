@@ -5,7 +5,7 @@ use crate::{
     ports::{Alarm, Commit, Value},
     sched::{
         dispatch::dispatch_due,
-        queue::{SeriesFilter, enqueue_where, process_queue},
+        queue::{REMINDER_SCHEDULE_READY, SeriesFilter, enqueue_where, process_queue},
     },
     sources::sync::{send_source_alerts, sync_due_source},
     time::zone::utc_to_wall,
@@ -47,11 +47,11 @@ fn number(db: &impl Db, key: &str) -> Result<Option<i64>, CoreError> {
 pub fn compute_next_alarm(db: &impl Db, now: i64) -> Result<i64, CoreError> {
     let maintenance =
         number(db, "last_maintenance_at")?.map_or(now, |last| last.saturating_add(DAY));
-    let rows=db.exec("SELECT MIN(at) AS earliest FROM (
-        SELECT MIN(next_attempt_at) AS at FROM reminders WHERE status='pending'
+    let rows=db.exec(&format!("SELECT MIN(at) AS earliest FROM (
+        SELECT MIN(next_attempt_at) AS at FROM reminders WHERE status='pending' AND {REMINDER_SCHEDULE_READY}
         UNION ALL SELECT MIN(not_before) FROM reconcile_queue
         UNION ALL SELECT MIN(COALESCE(last_sync_at+interval_min*60000,?1)) FROM sources WHERE enabled=1
-        UNION ALL SELECT ?2)",&[Value::Integer(now),Value::Integer(maintenance)])?;
+        UNION ALL SELECT ?2)"),&[Value::Integer(now),Value::Integer(maintenance)])?;
     rows.first()
         .ok_or_else(|| CoreError::Internal("missing next alarm".into()))?
         .i64("earliest")
