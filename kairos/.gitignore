@@ -1,0 +1,5 @@
+target/
+crates/kairos-web/dist/
+build/
+.wrangler/
+.dev.vars*

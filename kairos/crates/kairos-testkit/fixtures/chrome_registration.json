@@ -1,0 +1,15 @@
+{
+  "response": {
+    "id": "Q3hs5pRAY3kaU0jpYSH9hZaiJBn9nqbINYHBmlhSQGg",
+    "rawId": "Q3hs5pRAY3kaU0jpYSH9hZaiJBn9nqbINYHBmlhSQGg",
+    "response": {
+      "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVikSZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2NFAAAAAQECAwQFBgcIAQIDBAUGBwgAIEN4bOaUQGN5GlNI6WEh_YWWoiQZ_Z6myDWBwZpYUkBopQECAyYgASFYIE-rO4YJh2cyWs4gBymED9wQ0pQZc-3vmGHPnApEE9_fIlggjt55SCoS5GMS9EWCw-KF70EWQk0QSkBgJwNma8Noa_s",
+      "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiTWhyT3FHaDF1dEVsUlBzc0lZVkF4TDVmVTUxYlhnekhJTkVsWDhVdWxwOCIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODc5OSIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+      "transports": [
+        "internal"
+      ]
+    },
+    "type": "public-key"
+  },
+  "user_id": "MAHEe_TtWQqvu8QAwTtVHg"
+}

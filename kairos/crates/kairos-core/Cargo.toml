@@ -1,0 +1,36 @@
+[package]
+name = "kairos-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url = "2"
+futures = "0.3.33"
+kairos-types = { version = "0.1.0", path = "../kairos-types" }
+matchit = "0.8.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = { version = "0.11.1", default-features = false }
+
+ical = { version = "0.11", default-features = false, features = ["ical"] }
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
+rrule = "0.14"
+chrono = { version = "0.4", default-features = false }
+base64 = { version = "0.23.1", default-features = false, features = ["alloc"] }
+hmac = { version = "0.13.0", default-features = false }
+subtle = { version = "2.6.1", default-features = false }
+ciborium = { version = "0.2.2", default-features = false, features = ["std"] }
+coset = { version = "0.4.2", default-features = false }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
+ed25519-dalek = { version = "3.0.0", default-features = false }
+rsa = { version = "0.10.0", default-features = false, features = ["pkcs1v15"] }
+
+[features]
+test-hooks = []
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
