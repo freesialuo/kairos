@@ -38,4 +38,5 @@ impl<P: Ports> Hub<P> {
 
 pub mod ics {
     pub mod expand;
+    pub mod parse;
 }
