@@ -85,6 +85,44 @@ impl TestHub {
     pub fn sql(&self, q: &str) -> Vec<Row> {
         self.db.exec(q, &[]).expect("test SQL")
     }
+    pub async fn admin_session(&self) -> String {
+        use authenticator::{Alg, SoftAuthenticator};
+        use kairos_types::auth::CreationOptionsJson;
+
+        let recovery = self
+            .request(
+                "POST",
+                "/auth/recovery",
+                Some(serde_json::json!({"code": "correct horse"})),
+                &[],
+            )
+            .await;
+        assert_eq!(recovery.status, 200);
+        let session = recovery
+            .cookie("__Host-sid")
+            .expect("recovery session cookie");
+        let options = self
+            .request("POST", "/auth/passkey/register/options", None, &[session])
+            .await;
+        assert_eq!(options.status, 200);
+        let challenge = options
+            .cookie("__Host-chal")
+            .expect("registration challenge cookie");
+        let options: CreationOptionsJson =
+            serde_json::from_slice(&options.body).expect("registration options");
+        let mut authenticator = SoftAuthenticator::new(Alg::Es256, self.entropy.0.get());
+        let attestation = authenticator.register(&options, &self.config.origin);
+        let verified = self
+            .request(
+                "POST",
+                "/auth/passkey/register/verify",
+                Some(serde_json::json!({"response": attestation})),
+                &[session, challenge],
+            )
+            .await;
+        assert_eq!(verified.status, 200);
+        session.into()
+    }
     pub async fn request(
         &self,
         method: &str,
@@ -127,5 +165,15 @@ impl Deref for TestResponse {
 impl TestResponse {
     pub fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body).expect("JSON response")
+    }
+    pub fn cookie(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find_map(|(header, value)| {
+            if !header.eq_ignore_ascii_case("set-cookie") {
+                return None;
+            }
+            let pair = value.split(';').next()?;
+            let (cookie_name, _) = pair.split_once('=')?;
+            (cookie_name == name).then_some(pair)
+        })
     }
 }

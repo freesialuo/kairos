@@ -1,3 +1,4 @@
+pub(crate) mod auth_routes;
 #[cfg(feature = "test-hooks")]
 mod internal;
 pub mod router;

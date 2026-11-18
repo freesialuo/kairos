@@ -24,6 +24,12 @@ impl<P: Ports> Hub<P> {
         }
     }
     async fn route(&self, req: Request) -> Result<Response, CoreError> {
+        if req.path.starts_with("/auth/") {
+            return super::auth_routes::route(self, &req);
+        }
+        if req.path.starts_with("/api/admin/") {
+            crate::auth::session::require_full_session(self, &req)?;
+        }
         if req.method == Method::Post && req.path == "/internal/rearm" {
             return Ok(Response::json(
                 200,
