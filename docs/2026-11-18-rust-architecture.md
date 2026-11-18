@@ -534,7 +534,7 @@ Parsing: `ical` provides unfolded lines, properties, parameters, and the compone
 
 ### 11.3 Recovery code
 
-- Set with `wrangler secret put RECOVERY_CODE`. The Hub keeps only its SHA-256 digest in memory and compares digests with `subtle::ConstantTimeEq`.
+- Supply the initial value with the first deployment. Rotate it with `wrangler secret put RECOVERY_CODE`. The Hub keeps only its SHA-256 digest in memory and compares digests with `subtle::ConstantTimeEq`.
 - **Uses:**
   1. **First-time setup:** while no valid key exists for `RP_ID`, the first registration needs a recovery session. This stops strangers from claiming a fresh deployment.
   2. **Lost device or domain change:** the recovery session can only register a new passkey. Registering upgrades it to `full`.
@@ -673,7 +673,7 @@ All routing happens in `kairos-core::router` (`matchit` path tables per prefix),
 - `build`: `trunk build --release` (into `crates/kairos-web/dist`, which includes `boot.js` and `_headers`), then the worker build.
 - `test`: `cargo test --workspace` natively; `wasm-bindgen-test` (under Node) for the pure `kairos-core` modules on `wasm32` (time, ICS, expansion, WebAuthn) to catch Wasm-only problems such as a stray `SystemTime::now()`; `cargo clippy -- -D warnings`.
 - `e2e`: builds with `--features test-hooks`, starts `wrangler dev --env e2e` plus a local mock Bark and feed server, runs the `e2e` crate.
-- `deploy`: rejects builds with `test-hooks`, runs `build`, then `wrangler deploy`, then prints `startup_time_ms`.
+- `deploy [--secrets-file PATH]` rejects the placeholder configuration and test-hook builds. It runs the release build and dry run, then invokes Wrangler for the live deployment. The optional file supplies the initial secrets during that upload. Wrangler reports startup time in milliseconds. See the [deployment guide](deployment.md).
 
 **Configuration**
 
@@ -681,7 +681,7 @@ All routing happens in `kairos-core::router` (`matchit` path tables per prefix),
 |---|---|---|
 | `main`, build command | `wrangler.toml`: `main = "build/worker/shim.mjs"`, `[build] command = "worker-build --release --panic-unwind"` | `[env.e2e]` uses a build command with `--features test-hooks` **and** its own `assets.run_worker_first = ["/api/*", "/auth/*", "/__test/*"]`, so the test routes reach the Hub only in that environment |
 | `RP_ID`, `ORIGIN` | `wrangler.toml` vars | Fixed once; changing them triggers the recovery flow |
-| `RECOVERY_CODE`, `SESSION_SECRET` | `wrangler secret put` | Rotating `SESSION_SECRET` invalidates in-flight challenges only; rotating `RECOVERY_CODE` invalidates the old code |
+| `RECOVERY_CODE`, `SESSION_SECRET` | First upload with `--secrets-file`. Rotate individual values with `wrangler secret put`. | Rotating `SESSION_SECRET` invalidates in-flight challenges only; rotating `RECOVERY_CODE` invalidates the old code |
 | Durable Object | binding `HUB` → class `Hub`; migration `v1` `new_sqlite_classes = ["Hub"]` | |
 | Watchdog | `[triggers] crons = ["0 */6 * * *"]` | |
 | Static assets | `assets.directory = "crates/kairos-web/dist"`, `not_found_handling = "single-page-application"`, `run_worker_first = ["/api/*", "/auth/*"]` | `_headers` for CSP |

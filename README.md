@@ -2,35 +2,21 @@
 
 Kairos is a single-user calendar and reminder app for Cloudflare Workers. It imports ICS feeds, accepts events through an authenticated HTTP API, and sends reminders through Bark. The browser app and the Worker share Rust types. One SQLite-backed Durable Object owns the calendar, sessions, and reminder queue.
 
+## Deploy to Cloudflare
+
+Follow the [step-by-step deployment guide](docs/deployment.md) to go from a fresh clone to a live Worker. It covers tool installation, Cloudflare account and hostname selection, first-deploy secrets, passkey registration, and a test reminder on your Bark device.
+
 ## Build and test locally
 
-Run the commands below from the directory containing this README. Install Rust with rustup, Node.js with npm, and Chrome or Chromium. The workspace selects stable Rust for the core and browser app. Worker builds with panic recovery also require nightly and its Rust source component.
+Run these commands from the repository root after installing the tools listed in the deployment guide.
 
-```sh
-rustup target add wasm32-unknown-unknown --toolchain stable
-rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
-cargo install --locked --version 0.22.2 trunk
-cargo install --locked --version 0.2.130 wasm-bindgen-cli
-cargo install --locked --version 0.9.0 worker-build
-cargo xtask test
-cargo xtask build
-cargo xtask e2e
-```
+| Command | What it checks |
+| --- | --- |
+| `cargo xtask build` | Builds the browser and Worker release bundles and runs a local Wrangler deployment dry run. |
+| `cargo xtask test` | Runs the native workspace tests, core WebAssembly tests under Node, and Clippy. |
+| `cargo xtask e2e` | Starts local Wrangler on port 8799 and uses Chrome with a virtual passkey to check setup, sign-in, and delivery to a local Bark stand-in. |
 
-`test` runs the native workspace suite, core WebAssembly tests under Node, and Clippy. `build` compiles the browser app and bundles the release Worker with a local Wrangler deployment dry run. `e2e` starts Wrangler on localhost:8799, exercises the actual storage and alarm adapters, then uses Chrome with a virtual passkey to register, sign in, create an event, and verify delivery to a local Bark stand-in. Set `KAIROS_CHROME_PATH` if Chromium is installed outside its usual location. The first build downloads the locked dependencies and build tools.
-
-## First deployment
-
-1. Choose the HTTPS hostname where the browser app will actually be served. In `wrangler.toml`, set the production `RP_ID` to that hostname and `ORIGIN` to its exact HTTPS origin. Leave the local e2e environment on localhost. Configure the corresponding Worker route or custom domain in Cloudflare if needed.
-2. Authenticate Wrangler to the intended Cloudflare account. Store a strong recovery code and an independent, random 32-byte session secret. Generate the session secret with `openssl rand -hex 32`. Paste each value into its Wrangler prompt and keep the recovery code in your password manager.
-3. Deploy and open `/setup` on the configured hostname. Enter the recovery code, register your first passkey, and review the time zone under **Settings**.
-
-```sh
-npx --yes wrangler@4.164.0 login
-npx --yes wrangler@4.164.0 secret put RECOVERY_CODE --env ''
-npx --yes wrangler@4.164.0 secret put SESSION_SECRET --env ''
-cargo xtask deploy
-```
+Chrome or Chromium is required for `e2e`. Set `KAIROS_CHROME_PATH` if your browser is installed outside its usual location.
 
 ## Use and operate Kairos
 
