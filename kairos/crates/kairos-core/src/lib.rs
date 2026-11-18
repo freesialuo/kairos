@@ -1,4 +1,7 @@
 pub mod calendar {
+    pub mod events;
+    pub mod plan;
+    pub mod reconcile;
     pub mod model;
 }
 pub mod config;
@@ -10,7 +13,11 @@ pub mod db {
 pub mod error;
 pub mod http;
 pub mod ports;
+pub mod sources {
+    pub mod model;
+}
 pub mod sched {
+    pub mod queue;
     pub mod alarm;
 }
 
