@@ -3,7 +3,7 @@ use crate::{
     ports::{Row, Value},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SourceRow {
     pub id: i64,
     pub name: String,

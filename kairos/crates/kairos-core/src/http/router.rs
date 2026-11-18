@@ -31,7 +31,7 @@ impl<P: Ports> Hub<P> {
             return super::api_v1::route(self, &req).await;
         }
         if req.path.starts_with("/api/admin/") {
-            crate::auth::session::require_full_session(self, &req)?;
+            return super::admin::route(self, &req).await;
         }
         if req.method == Method::Post && req.path == "/internal/rearm" {
             return Ok(Response::json(

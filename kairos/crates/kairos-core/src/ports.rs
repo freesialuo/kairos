@@ -113,3 +113,24 @@ pub trait Ports {
     type Alarm: Alarm;
     type Commit: Commit;
 }
+
+impl Row {
+    /// Serialize explicitly projected, public columns for reports and exports.
+    pub(crate) fn into_json(self) -> serde_json::Value {
+        let object = self
+            .columns
+            .into_iter()
+            .map(|(name, value)| {
+                let json = match value {
+                    Value::Null => serde_json::Value::Null,
+                    Value::Integer(n) => n.into(),
+                    Value::Real(n) => n.into(),
+                    Value::Text(text) => text.into(),
+                    Value::Blob(_) => serde_json::Value::Null,
+                };
+                (name, json)
+            })
+            .collect();
+        serde_json::Value::Object(object)
+    }
+}

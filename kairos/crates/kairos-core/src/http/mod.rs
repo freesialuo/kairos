@@ -1,9 +1,10 @@
+pub mod admin;
 pub mod api_v1;
-pub mod validate;
 pub(crate) mod auth_routes;
 #[cfg(feature = "test-hooks")]
 mod internal;
 pub mod router;
+pub mod validate;
 
 use crate::CoreError;
 use serde::Serialize;
