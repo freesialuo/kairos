@@ -1,4 +1,8 @@
-use std::{cell::Cell, panic::AssertUnwindSafe, rc::Rc};
+use std::{
+    cell::Cell,
+    panic::{AssertUnwindSafe, catch_unwind},
+    rc::Rc,
+};
 
 use kairos_core::{Config, CoreError, Hub as CoreHub, http};
 use sha2::{Digest, Sha256};
@@ -65,11 +69,18 @@ impl DurableObject for Hub {
     }
 
     async fn alarm(&self) -> Result<Response> {
-        match self.ready() {
-            Ok(core) => {
-                let _ = core.run_alarm().await;
+        match catch_unwind(AssertUnwindSafe(|| self.ready())) {
+            Ok(Ok(core)) => {
+                let report = core.run_alarm().await;
+                for (step, error) in report.step_errors {
+                    console_error!("Kairos alarm {step} failed: {error}");
+                }
+                if let Some(error) = report.top_level_error {
+                    console_error!("Kairos alarm failed: {error}");
+                }
             }
-            Err(error) => console_error!("Kairos initialization failed: {error}"),
+            Ok(Err(error)) => console_error!("Kairos alarm initialization failed: {error}"),
+            Err(_) => console_error!("Kairos alarm initialization panicked"),
         }
         Response::empty()
     }

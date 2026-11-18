@@ -14,6 +14,10 @@ pub enum SeriesFilter {
     Source(i64),
     FloatingOrAllDay,
     RecurringOnly,
+    WindowRoll {
+        from_local_date: String,
+        before_local_date: String,
+    },
     All,
 }
 
@@ -50,6 +54,13 @@ pub fn enqueue_where(
         }
         SeriesFilter::FloatingOrAllDay => "tzid IS NULL OR all_day=1",
         SeriesFilter::RecurringOnly => "recurrence_id IS NULL AND rrule IS NOT NULL",
+        SeriesFilter::WindowRoll {
+            from_local_date,
+            before_local_date,
+        } => {
+            params.extend([Value::Text(from_local_date), Value::Text(before_local_date)]);
+            "(recurrence_id IS NULL AND rrule IS NOT NULL) OR (start_local >= ?3 AND start_local < ?4)"
+        }
         SeriesFilter::All => "1",
     };
     let changed = db.exec(

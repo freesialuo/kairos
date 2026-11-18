@@ -14,7 +14,7 @@ use crate::{
     sources::model::get_source,
 };
 
-const WINDOW_MS: i64 = 60 * 86_400_000;
+pub(crate) const WINDOW_MS: i64 = 60 * 86_400_000;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReconcileOutcome {

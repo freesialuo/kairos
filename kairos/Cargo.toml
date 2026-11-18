@@ -23,3 +23,5 @@ overflow-checks = true
 # wasm-bindgen needs the Wasm feature and stack metadata to wire panic recovery.
 [profile.release.package.kairos-worker]
 strip = "debuginfo"
+# LLVM Wasm exception lowering needs reduced optimization for the alarm future.
+opt-level = 1

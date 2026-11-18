@@ -49,7 +49,7 @@ pub fn put_settings(db: &impl Db, settings: &Settings) -> Result<(), CoreError> 
     Ok(())
 }
 
-pub(super) fn read_meta(db: &impl Db, key: &str) -> Result<Option<String>, CoreError> {
+pub(crate) fn read_meta(db: &impl Db, key: &str) -> Result<Option<String>, CoreError> {
     db.exec(
         "SELECT value FROM settings WHERE key=?1",
         &[Value::Text(format!("meta:{key}"))],

@@ -24,6 +24,12 @@ impl<P: Ports> Hub<P> {
         }
     }
     async fn route(&self, req: Request) -> Result<Response, CoreError> {
+        if req.method == Method::Post && req.path == "/internal/rearm" {
+            return Ok(Response::json(
+                200,
+                &crate::sched::alarm::watchdog(self).await?,
+            ));
+        }
         #[cfg(feature = "test-hooks")]
         if self.config.allow_http_urls && req.path.starts_with("/__test/adapter/") {
             return super::internal::adapter(self, &req).await;

@@ -21,6 +21,7 @@ pub mod sources {
 pub mod sched {
     pub mod queue;
     pub mod alarm;
+    pub mod dispatch;
 }
 
 pub use config::Config;
