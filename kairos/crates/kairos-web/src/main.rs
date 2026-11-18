@@ -4,6 +4,8 @@ mod api;
 mod app;
 #[cfg(any(target_arch = "wasm32", test))]
 mod b64;
+#[cfg(any(target_arch = "wasm32", test))]
+mod calendar_grid;
 #[cfg(target_arch = "wasm32")]
 mod pages;
 #[cfg(target_arch = "wasm32")]
