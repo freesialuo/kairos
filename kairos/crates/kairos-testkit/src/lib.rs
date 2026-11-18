@@ -1,4 +1,5 @@
 //! Native integration harness for the same Hub used by the Worker.
+pub mod authenticator;
 mod db;
 mod fakes;
 pub use db::SqliteDb;
