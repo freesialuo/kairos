@@ -2,3 +2,5 @@
 pub struct HealthResponse {
     pub ok: bool,
 }
+
+pub mod auth;
