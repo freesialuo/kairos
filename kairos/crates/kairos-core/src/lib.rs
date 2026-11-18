@@ -1,9 +1,9 @@
 pub mod auth;
 pub mod calendar {
     pub mod events;
+    pub mod model;
     pub mod plan;
     pub mod reconcile;
-    pub mod model;
 }
 pub mod config;
 pub mod time;
@@ -16,13 +16,13 @@ pub mod http;
 pub mod notify;
 pub mod ports;
 pub mod sources {
-    pub mod sync;
     pub mod model;
+    pub mod sync;
 }
 pub mod sched {
-    pub mod queue;
     pub mod alarm;
     pub mod dispatch;
+    pub mod queue;
 }
 
 pub use config::Config;
@@ -40,7 +40,15 @@ pub struct Hub<P: Ports> {
 }
 impl<P: Ports> Hub<P> {
     pub fn now(&self) -> i64 {
-        self.clock.now_ms()
+        let now = self.clock.now_ms();
+        #[cfg(feature = "test-hooks")]
+        if self.config.allow_http_urls {
+            let offset = crate::db::settings::get_meta(&self.db, "test_clock_offset_ms")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            return now.saturating_add(offset);
+        }
+        now
     }
     pub fn migrate(&self) -> Result<(), CoreError> {
         db::schema::migrate(&self.db)

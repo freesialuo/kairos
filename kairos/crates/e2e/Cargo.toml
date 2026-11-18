@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 axum = "0.8"
+chromiumoxide = { version = "0.9.1", default-features = false, optional = true }
 futures = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 serde_json = "1"
@@ -17,5 +18,10 @@ tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
 name = "adapters"
 required-features = ["wrangler"]
 
+[[test]]
+name = "smoke"
+required-features = ["browser"]
+
 [features]
 wrangler = []
+browser = ["wrangler", "dep:chromiumoxide"]

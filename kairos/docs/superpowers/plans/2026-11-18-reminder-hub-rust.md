@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Task 1 verified on `feat/kairos-impl` (2026-11-18). The five foundation tests passed against bundled SQLite and workspace Clippy passed. Tasks 2–17 are pending.
+**Status (2026-11-18).** Tasks 1–17 are implemented and verified locally. The final run passed 176 native tests, 55 core WebAssembly tests under Node, native and WebAssembly Clippy, the Wrangler adapter lifecycle, and the real Chrome passkey and reminder journey. The production Worker deployment dry run passed. Setup and operation are documented in [the README](../../../README.md). Real Cloudflare startup time, largest-feed CPU and delivery to the owner's Bark device require the production origin and account.
+
+The checkboxes below record completed implementation, test coverage and final checks. An unchecked historical red-run step means that its original failing run was not independently recorded. For combined red/green instructions, the implementation and passing run are covered by the final suites.
 
 **Goal:** Build the single-user reminder hub specified in the design (ICS feeds + API + manual events → Bark reminders from a self-arming Durable Object alarm, passkey-protected web UI) entirely in Rust on Cloudflare Workers.
 
@@ -360,7 +362,7 @@ Row conversion in `DoDb::exec`: iterate the cursor's JS row objects; `null` → 
 
 `Hub` DO: holds `CoreHub<WorkerPorts>` and a `migrated: Cell<bool>`; `fetch` and `alarm` call `migrate()` once first. `alarm()` calls `run_alarm` and always returns `Ok`. Entry `fetch` forwards any path starting with `/api/`, `/auth/` (and `/__test/` with the feature) to the stub unchanged; anything else → 404 (static assets never reach it). Entry `scheduled` is added in Task 9.
 
-- [ ] **Step 1: Write the failing adapter tests** in `crates/e2e/tests/adapters.rs`
+- [x] **Step 1: Write the failing adapter tests** in `crates/e2e/tests/adapters.rs`
 
 ```rust
 #[tokio::test] async fn health_through_worker_and_do() { let w = WranglerDev::start().await; assert_eq!(w.get_json("/api/health").await["ok"], true); }
@@ -376,9 +378,9 @@ Row conversion in `DoDb::exec`: iterate the cursor's JS row objects; `null` → 
 ```
 
 - [ ] **Step 2: Run** `cargo xtask e2e` — Expected: FAIL (worker crate missing).
-- [ ] **Step 3: Implement** `kairos-worker`, the adapters, the test-hook routes, and the harness as specified.
-- [ ] **Step 4: Run** `cargo xtask e2e` — Expected: PASS. Also run `npx wrangler deploy --dry-run --outdir build/dry` and record in `docs/rust-on-workers-notes.md`: Wasm size, how `RawStorage` was obtained, the `worker-build` command that worked, whether `getrandom` needed the rustflag, and any `--panic-unwind` issue.
-- [ ] **Step 5: Commit** — `feat: workers-rs adapters, transactionSync binding and adapter smoke tests`
+- [x] **Step 3: Implement** `kairos-worker`, the adapters, the test-hook routes, and the harness as specified.
+- [x] **Step 4: Run** `cargo xtask e2e` — Expected: PASS. Also run `npx wrangler deploy --dry-run --outdir build/dry` and record in `docs/rust-on-workers-notes.md`: Wasm size, how `RawStorage` was obtained, the `worker-build` command that worked, whether `getrandom` needed the rustflag, and any `--panic-unwind` issue.
+- [x] **Step 5: Commit** — `feat: workers-rs adapters, transactionSync binding and adapter smoke tests`
 
 ---
 
@@ -401,7 +403,7 @@ pub fn parse_api_instant(s: &str, zone_hint: &str) -> Result<(String /*wall*/, S
 pub enum TimeError { BadFormat(String), UnknownZone(String), OutOfRange }
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn ny_gap_moves_forward() { assert_eq!(wall_to_utc(dt("2026-03-08T02:30:00"), "America/New_York").unwrap(), ms("2026-03-08T07:30:00Z")); }
@@ -418,9 +420,9 @@ pub enum TimeError { BadFormat(String), UnknownZone(String), OutOfRange }
 Property tests (`proptest`, zones `America/New_York`, `Europe/Berlin`, `Australia/Lord_Howe`, `Asia/Kolkata`, `UTC`; wall times in 2025–2027): (a) `utc_to_wall(wall_to_utc(w)) == w` whenever `w` exists in the zone; (b) for a gap wall time, `utc_to_wall(wall_to_utc(w)) == w + gap length`.
 
 - [ ] **Step 2: Run** `cargo test -p kairos-core time:: && cargo test -p kairos-testkit --test time_props` — FAIL.
-- [ ] **Step 3: Implement** with `jiff` (`civil::DateTime::to_zoned` uses `Compatible` by default; look zones up with `jiff::tz::db().get`). `parse_api_instant`: if the string has an offset or `Z`, convert the instant to wall time in `zone_hint`; otherwise return the wall unchanged.
-- [ ] **Step 4: Run** both — PASS.
-- [ ] **Step 5: Commit** — `feat: wall-clock to UTC conversion with RFC 5545 DST rules`
+- [x] **Step 3: Implement** with `jiff` (`civil::DateTime::to_zoned` uses `Compatible` by default; look zones up with `jiff::tz::db().get`). `parse_api_instant`: if the string has an offset or `Z`, convert the instant to wall time in `zone_hint`; otherwise return the wall unchanged.
+- [x] **Step 4: Run** both — PASS.
+- [x] **Step 5: Commit** — `feat: wall-clock to UTC conversion with RFC 5545 DST rules`
 
 ---
 
@@ -453,7 +455,7 @@ Rules (§9, implement each; one fixture per rule):
 - `RDATE` → warning `RDATE ignored on "<summary>"`.
 - `series_key = format!("ics:{source_id}:{uid}")`; `origin = Ics`; `lead_minutes = None`.
 
-- [ ] **Step 1: Write the failing tests** (one per rule; names below; each asserts the exact field values)
+- [x] **Step 1: Write the failing tests** (one per rule; names below; each asserts the exact field values)
 
 ```rust
 #[test] fn parses_timed_tzid_event() { /* tzid Some("Europe/Berlin"), start_local "2026-11-23T09:00:00", duration 3600 */ }
@@ -479,9 +481,9 @@ Rules (§9, implement each; one fixture per rule):
 (`\xE4\xBC\x9A` is `会`; the fold splits `议` = `\xE8\xAE\xAE` onto the continuation line — adjust the split to land inside a character if the fixture above does not.)
 
 - [ ] **Step 2: Run** `cargo test -p kairos-core ics::parse` — FAIL.
-- [ ] **Step 3: Implement** `parse_ics` per the rules.
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: ICS parsing with cancellation, override and VALARM rules`
+- [x] **Step 3: Implement** `parse_ics` per the rules.
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Commit** — `feat: ICS parsing with cancellation, override and VALARM rules`
 
 ---
 
@@ -516,7 +518,7 @@ Algorithm (§7.4) — the part the signature does not determine:
 - End = start + `duration_sec` (all-day: the wall date + N days, converted).
 - Output sorted by `start_utc`, then `occ_key`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn weekly_stays_at_nine_across_dst() { /* NY weekly 09:00 from 2026-10-26, window to 2026-11-16 → UTC hours 13,13,14,14 */ }
@@ -540,9 +542,9 @@ Algorithm (§7.4) — the part the signature does not determine:
 `expand_props.rs`: differential property — generated parent rows (DAILY/WEEKLY with BYDAY and INTERVAL 1–3/MONTHLY BYMONTHDAY=31/YEARLY; optional COUNT ≤ 400, UNTIL, up to 3 EXDATEs; zones as in Task 3; DTSTART 2018–2026) → for windows starting at random offsets, expanding with an anchor computed by a previous call equals expanding with `Budget::Unlimited`.
 
 - [ ] **Step 2: Run** `cargo test -p kairos-core ics::expand && cargo test -p kairos-testkit --test expand_props` — FAIL.
-- [ ] **Step 3: Implement** `expand_series` and `validate_rrule`.
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: floating recurrence expansion with anchor and budget`
+- [x] **Step 3: Implement** `expand_series` and `validate_rrule`.
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Commit** — `feat: floating recurrence expansion with anchor and budget`
 
 ---
 
@@ -593,7 +595,7 @@ Rules:
 - `reconcile_series`: load series → if empty, delete its pending reminders (withdraw rule) and return `Gone`; expand `[now, now + 60 d)` with `anchor_before_utc = now − ANCHOR_LAG_MS`; persist anchor/status/warning on the parent; plan; diff exactly per the §7.3 table (including the `withdrawn: event changed or removed` delivery when `attempts > 0`, `channel = 'bark'`, `kind = 'reminder'`, `ok = 0`); on `CatchingUp`, re-enqueue with reason `catch_up` (attempts 0, `not_before = now`).
 - `process_queue` (§7.1 step 2): select ≤ `QUEUE_BATCH` items with `not_before <= now` ordered by `not_before`; for each item: **trace first** (`attempts += 1`, `not_before = now + 2^attempts min`, `last_error = 'interrupted'`), `commit_point().await`, then `db.transaction(|tx| reconcile_series(tx, key, now))`; success → delete the item (unless reconcile re-enqueued it for `catch_up`, which resets it); `Err`/panic (caught per item) → `last_error` = message; if `attempts >= 3` → delete the item, set the parent's `expand_warning = "Reminder recomputation failed: <msg>"`, log. Failure to select or to write a trace → `step_error`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 // plan.rs unit tests
@@ -615,9 +617,9 @@ Rules:
 ```
 
 - [ ] **Step 2: Run** `cargo test -p kairos-core calendar::plan && cargo test -p kairos-testkit --test reconcile` — FAIL.
-- [ ] **Step 3: Implement** the modules.
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: event store, reminder planning, reconciliation and reconcile queue`
+- [x] **Step 3: Implement** the modules.
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Commit** — `feat: event store, reminder planning, reconciliation and reconcile queue`
 
 ---
 
@@ -642,9 +644,9 @@ pub async fn send_bark(http: &impl Http, cfg: &BarkConfig, msg: &Message) -> Res
 ```
 Exact copy (§10): title `⏰ <title>`; body `HH:mm · in N min` / `HH:mm · now` (when `now >= occ_start_utc − 60_000`) / `Today · all day`, then ` · <location>` and ` · <source>` when present; `(late) ` prefix on the title when `late`; url `<origin>/calendar?event=<id>`. Alert: title `⚠️ Source sync failing`, body `<name>: <error truncated to 200 chars>`, url `<origin>/sources`. Bark request: `POST <server>/push`, JSON `{device_key,title,body,url,group:"reminders",level:"timeSensitive"}`, `max_body_bytes = 65_536`; success iff HTTP 200 and JSON `code == 200`.
 
-- [ ] **Step 1: Write the failing tests** — `formats_timed_in_n_min`, `formats_now_for_lead_zero`, `formats_all_day`, `late_prefix`, `alert_truncates_error_to_200_chars` (exact strings); `bark_posts_expected_json` (inspect `FakeHttp::requests()`), `bark_http_500_is_error`, `bark_code_400_in_200_response_is_error`.
+- [x] **Step 1: Write the failing tests** — `formats_timed_in_n_min`, `formats_now_for_lead_zero`, `formats_all_day`, `late_prefix`, `alert_truncates_error_to_200_chars` (exact strings); `bark_posts_expected_json` (inspect `FakeHttp::requests()`), `bark_http_500_is_error`, `bark_code_400_in_200_response_is_error`.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: reminder messages and Bark channel`
+- [x] **Step 5: Commit** — `feat: reminder messages and Bark channel`
 
 ---
 
@@ -667,7 +669,7 @@ pub struct SyncSummary { pub events: u32, pub enqueued: u32, pub unchanged: bool
 ```
 Rules (§7.5): trace first (`last_sync_at = now`, `consecutive_failures += 1`, `last_error = 'interrupted before completion (CPU or memory limit?)'`); conditional GET with stored validators, `max_body_bytes = MAX_ICS_BYTES`; reject `Content-Length > MAX_ICS_BYTES` and `NetError::TooLarge` with `feed too large (> 5 MB)`; non-2xx → `HTTP <status>`; `NotCalendar` → `not a calendar (no VCALENDAR)`; `InvalidUtf8` → `feed is not valid UTF-8`; `304` → success `unchanged`. Success: one transaction — upsert rows, prune rows of this source not in the feed (whole series and stale overrides), enqueue changed/created/pruned series (`sync`), store validators, `consecutive_failures = 0`, `alerted = 0`, `last_error = NULL`, `last_result = "ok: N events"` + `"; " + warnings.join("; ")` when any. Failure: overwrite `last_error` only. URL must be `https://` unless `config.allow_http_urls`. `send_source_alerts`: for each source with `consecutive_failures >= 3 AND alerted = 0`: set `alerted = 1` first, then send (no channel → log only), append `deliveries` (`kind='source_alert'`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[tokio::test] async fn first_sync_imports_and_enqueues() {}
@@ -688,7 +690,7 @@ Rules (§7.5): trace first (`last_sync_at = now`, `consecutive_failures += 1`, `
 ```
 
 - [ ] **Step 2: Run** `cargo test -p kairos-testkit --test sync` — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: source sync with pessimistic traces and source alerts`
+- [x] **Step 5: Commit** — `feat: source sync with pessimistic traces and source alerts`
 
 ---
 
@@ -726,10 +728,10 @@ pub async fn rearm(&self, floor: Floor);
 - `run_alarm`: `now = self.now()`; steps in order through `run_step`: `dispatch`, `queue`, `source_alerts`, `sync`, `maintenance` (only if `meta:last_maintenance_at` absent or `+ 24 h <= now`; trace `last_maintenance_at = now − 23 h` + `commit_point()` first; on error set `meta:last_maintenance_error`); the whole sequence inside a top-level catch; then `rearm(Floor::AlarmError)` if any step reported a `step_error` or the top level failed, else `rearm(Floor::AlarmClean)`; record `meta:last_alarm_error` (message) and the report.
 - `rearm(floor)`: streak (`meta:alarm_error_streak`) — `Http` leaves it alone, `AlarmClean` sets 0 (writes only if it was non-zero), `AlarmError` adds 1. Floor time — `Http`/`AlarmClean`: `now + 1000`; `AlarmError`: `now + min(2^(streak − 1), 15) · 60_000`. `target = max(next, floor)` where `next = compute_next_alarm(now)` (it always has a value, because the maintenance term is always present). `alarm.set(target)` only if `alarm.get() != Some(target)`. A `compute_next_alarm` error is treated as `next = now + 15 min` and logged.
 - `compute_next_alarm` = min over: pending `next_attempt_at`; queue `not_before`; enabled sources `COALESCE(last_sync_at + interval_min·60_000, now)`; `COALESCE(last_maintenance_at + 86_400_000, now)`.
-- `run_maintenance` (§7.1): enqueue `RecurringOnly` with reason `roll`; delete `deliveries` older than 90 d and non-pending reminders whose `fire_at` is older than 90 d; delete expired sessions; delete `auth_failures` older than 1 h; `last_maintenance_at = now`; clear `last_maintenance_error`.
+- `run_maintenance` (§7.1): enqueue recurring series and events newly entering the 60-day window with reason `roll`; delete `deliveries` older than 90 d and non-pending reminders whose `fire_at` is older than 90 d; delete expired sessions; delete `auth_failures` older than 1 h; `last_maintenance_at = now`; clear `last_maintenance_error`.
 - `watchdog`: `alarm.get()` is `Some` → `AlarmPresent` (no writes); else `rearm(Floor::Http)`, set `meta:last_watchdog_at = now` and `meta:last_alarm_error = "alarm was missing; re-armed by watchdog"` → `Rearmed`. Route: `POST /internal/rearm` (no auth; reachable only via the entry Worker). Entry `scheduled` handler: stub `fetch` `POST https://hub/internal/rearm`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 // dispatch.rs
@@ -768,9 +770,9 @@ pub async fn rearm(&self, floor: Floor);
 ```
 
 - [ ] **Step 2: Run** `cargo test -p kairos-testkit --test dispatch --test alarm` — FAIL.
-- [ ] **Step 3: Implement**; wire `Hub::run_alarm`/`rearm`; add the entry `scheduled` handler.
-- [ ] **Step 4: Run** — PASS; `cargo xtask e2e` still PASS.
-- [ ] **Step 5: Commit** — `feat: dispatch, isolated alarm steps, backoff and watchdog`
+- [x] **Step 3: Implement**; wire `Hub::run_alarm`/`rearm`; add the entry `scheduled` handler.
+- [x] **Step 4: Run** — PASS; `cargo xtask e2e` still PASS.
+- [x] **Step 5: Commit** — `feat: dispatch, isolated alarm steps, backoff and watchdog`
 
 ---
 
@@ -804,9 +806,9 @@ pub fn take_challenge<P: Ports>(hub: &Hub<P>, req: &Request, purpose: Purpose) -
 ```
 Values: cookie names `__Host-sid`, `__Host-chal`; session 32 random bytes, stored as SHA-256 hex; TTL 30 d, extended at most once per 24 h; challenge payload `{purpose, challenge, exp}` with `exp = now + 120_000`; recovery: 5 failures within 1 h → `meta:recovery_locked_until = now + 3_600_000`, failures recorded in `auth_failures`.
 
-- [ ] **Step 1: Write the failing tests** — `sign_verify_round_trip_and_tamper`, `ct_eq_lengths`, `session_slides_once_per_day`, `expired_session_is_none`, `origin_required_for_post_not_get`, `recovery_locks_after_five_failures_for_one_hour` (6th attempt with the right code → 429; at +61 min the right code passes), `challenge_wrong_purpose_rejected`, `challenge_expires_after_two_minutes`, `challenge_is_single_use` (clearing cookie returned).
+- [x] **Step 1: Write the failing tests** — `sign_verify_round_trip_and_tamper`, `ct_eq_lengths`, `session_slides_once_per_day`, `expired_session_is_none`, `origin_required_for_post_not_get`, `recovery_locks_after_five_failures_for_one_hour` (6th attempt with the right code → 429; at +61 min the right code passes), `challenge_wrong_purpose_rejected`, `challenge_expires_after_two_minutes`, `challenge_is_single_use` (clearing cookie returned).
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: sessions, CSRF, recovery code and signed challenges`
+- [x] **Step 5: Commit** — `feat: sessions, CSRF, recovery code and signed challenges`
 
 ---
 
@@ -848,9 +850,9 @@ pub struct SoftAuthenticator;  impl SoftAuthenticator {
 ```
 Checks: exactly the numbered lists in §11.2 (registration 1–8, authentication 1–6), in that order; signature before counter; ES256 DER signatures normalised to low-S before `p256` verification; EdDSA via `verify_strict`; RS256 PKCS#1 v1.5 SHA-256 with modulus ≥ 2,048 bits; `fmt`/`attStmt` ignored; extensions map skipped when `ED` is set.
 
-- [ ] **Step 1: Write the failing tests** — for each `Alg`: `registers_and_logs_in_<alg>`; negative tests, one per variant: `rejects_wrong_origin`, `rejects_wrong_challenge`, `rejects_create_type_on_login`, `rejects_cross_origin_true`, `rejects_wrong_rp_id_hash`, `rejects_user_presence_clear`, `rejects_trailing_bytes`, `accepts_extensions_map`, `accepts_uv_clear` (UV not required), `rejects_unsupported_alg` (P-384), `rejects_rsa_1024`, `rejects_id_mismatch`, `rejects_tampered_signature`, `rejects_counter_regression`, `accepts_zero_counters`, `accepts_high_s_es256`, `rejects_wrong_user_handle`.
+- [x] **Step 1: Write the failing tests** — for each `Alg`: `registers_and_logs_in_<alg>`; negative tests, one per variant: `rejects_wrong_origin`, `rejects_wrong_challenge`, `rejects_create_type_on_login`, `rejects_cross_origin_true`, `rejects_wrong_rp_id_hash`, `rejects_user_presence_clear`, `rejects_trailing_bytes`, `accepts_extensions_map`, `accepts_uv_clear` (UV not required), `rejects_unsupported_alg` (P-384), `rejects_rsa_1024`, `rejects_id_mismatch`, `rejects_tampered_signature`, `rejects_counter_regression`, `accepts_zero_counters`, `accepts_high_s_es256`, `rejects_wrong_user_handle`.
 - [ ] **Step 2: Run** `cargo test -p kairos-testkit --test webauthn` — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: in-house WebAuthn relying-party verification`
+- [x] **Step 5: Commit** — `feat: in-house WebAuthn relying-party verification`
 
 ---
 
@@ -865,9 +867,9 @@ Checks: exactly the numbered lists in §11.2 (registration 1–8, authentication
 - Produces routes (§12) and DTOs: `GET /auth/state` → `AuthState { setup_required: bool, session: Option<"full"|"recovery">, passkeys: u32 }` (`setup_required` = no passkey with `rp_id == RP_ID`); `POST /auth/recovery { code }` → recovery session; `POST /auth/passkey/register/options` (requires a full **or** recovery session — recovery is allowed at any time, which covers both first-time setup and a lost device, §11.3) → `CreationOptionsJson` + challenge cookie; `POST /auth/passkey/register/verify { response, name? }` → stores key (name default `Passkey <n>`), recovery session upgraded to full → `{ id }`; `POST /auth/passkey/login/options` → `RequestOptionsJson`; `POST /auth/passkey/login/verify { response }` → full session; `POST /auth/logout`, `POST /auth/logout-all`. `meta:webauthn_user_id` created on first registration (16 random bytes). Origin check on every POST. These routes change nothing the alarm depends on, so they do not call `rearm`.
 - Testkit: `TestHub::admin_session()` = recovery → register with `SoftAuthenticator(Es256)` → returns the full-session cookie.
 
-- [ ] **Step 1: Write the failing tests** — `fresh_deployment_requires_recovery_for_first_key`, `registration_without_session_is_401`, `recovery_session_can_only_register` (`GET /api/admin/settings` → 403), `register_then_login_with_passkey`, `stale_rp_id_key_not_counted_and_cannot_log_in` (insert a key with `rp_id='old.test'` → `setup_required: true`, login with it → 400 `unknown_credential`), `post_without_origin_is_403`, `logout_all_revokes_every_session`, `challenge_replay_rejected`.
+- [x] **Step 1: Write the failing tests** — `fresh_deployment_requires_recovery_for_first_key`, `registration_without_session_is_401`, `recovery_session_can_only_register` (`GET /api/admin/settings` → 403), `register_then_login_with_passkey`, `stale_rp_id_key_not_counted_and_cannot_log_in` (insert a key with `rp_id='old.test'` → `setup_required: true`, login with it → 400 `unknown_credential`), `post_without_origin_is_403`, `logout_all_revokes_every_session`, `challenge_replay_rejected`.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: passkey and recovery auth routes`
+- [x] **Step 5: Commit** — `feat: passkey and recovery auth routes`
 
 ---
 
@@ -898,7 +900,7 @@ pub fn list_occurrences<P: Ports>(hub: &Hub<P>, from: i64, to: i64, include_disa
 ```
 Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_series` in one transaction → `rearm`; `start` parsed with `parse_api_instant(start, timezone.unwrap_or(user_tz))`; `exdates` only with `rrule`; `reminders: []` → `lead_minutes = Some(vec![])`; absent → `None`; `rrule` validated with `validate_rrule`; DELETE → `204` / `404`, inline withdraw; GET range ≤ 92 days, hides disabled sources, `start_local`/`end_local` in the user zone. Tokens `kr_` + b64url(32 bytes); stored SHA-256 hex + 10-char prefix. API tokens may only write `api` events (other series keys are unreachable by construction: `series_key = "api:<external_id>"`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[tokio::test] async fn put_creates_then_unchanged_put_is_noop() { /* 200 created true → same body → created false, reminders_scheduled same */ }
@@ -918,7 +920,7 @@ Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_seri
 ```
 
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: API tokens and public events API v1`
+- [x] **Step 5: Commit** — `feat: API tokens and public events API v1`
 
 ---
 
@@ -944,9 +946,9 @@ Rules (§12): PUT = full replacement → `upsert_event` + inline `reconcile_seri
   - `kairos-types/repeat.rs`: `RepeatPreset { freq: Daily|Weekly{days}|Monthly|Yearly, interval: u8 (1–99), end: Never|Until(date)|Count(u16 1–999) }`; `to_rrule(&RepeatPreset) -> String` (Monthly uses the start's day of month: `FREQ=MONTHLY;BYMONTHDAY=<d>`); `from_rrule(&str, start_date) -> Option<RepeatPreset>` (inverse for editing).
   - `ReminderChoice { Default, Custom(Vec<u32>), None }` → `lead_minutes` `None` / `Some(v)` / `Some(vec![])`.
 
-- [ ] **Step 1: Write the failing tests** — `admin_requires_full_session`, `calendar_marks_deletable_and_editable`, `calendar_start_local_follows_user_zone_across_dst` (**Review Focus 4**: user `Asia/Shanghai`, weekly NY 09:00 from 2026-10-19, window 2026-10-19..2026-11-15 → `start_local` times `21:00` for 10-19/10-26 and `22:00` for 11-02/11-09 — NY falls back on 11-01, so Shanghai sees the later hour after it), `disabled_source_hidden_and_reminders_withdrawn_after_drain`, `notify_off_withdraws_reminders`, `settings_zone_change_queues_floating_only`, `manual_weekly_preset_creates_rrule`, `skip_one_occurrence_of_manual_series`, `skip_on_api_series_is_409`, `last_passkey_delete_needs_confirm`, `passkey_rename`, `channel_test_logs_test_delivery`, `token_shown_once`, `log_contains_background_section`, `queue_length_reports_pending_items`, `export_json_excludes_secrets`, `export_ics_round_trips_through_parse_ics`; `repeat.rs`: `to_rrule_from_rrule_round_trip` for each preset.
+- [x] **Step 1: Write the failing tests** — `admin_requires_full_session`, `calendar_marks_deletable_and_editable`, `calendar_start_local_follows_user_zone_across_dst` (**Review Focus 4**: user `Asia/Shanghai`, weekly NY 09:00 from 2026-10-19, window 2026-10-19..2026-11-15 → `start_local` times `21:00` for 10-19/10-26 and `22:00` for 11-02/11-09 — NY falls back on 11-01, so Shanghai sees the later hour after it), `disabled_source_hidden_and_reminders_withdrawn_after_drain`, `notify_off_withdraws_reminders`, `settings_zone_change_queues_floating_only`, `manual_weekly_preset_creates_rrule`, `skip_one_occurrence_of_manual_series`, `skip_on_api_series_is_409`, `last_passkey_delete_needs_confirm`, `passkey_rename`, `channel_test_logs_test_delivery`, `token_shown_once`, `log_contains_background_section`, `queue_length_reports_pending_items`, `export_json_excludes_secrets`, `export_ics_round_trips_through_parse_ics`; `repeat.rs`: `to_rrule_from_rrule_round_trip` for each preset.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** — `feat: admin API for the web app`
+- [x] **Step 5: Commit** — `feat: admin API for the web app`
 
 ---
 
@@ -992,9 +994,9 @@ await init({ module_or_path: './kairos-web_bg.wasm' });
 ```
 - Routes and guards (§13.1): `/setup` (step 1 recovery code → step 2 register passkey → save `browser_time_zone()` via `PUT /api/admin/settings` → `/calendar`), `/login` (one button: passkey login), all other pages require a full session; any `ApiError::Unauthorized` navigates to `/login`. Shell: top navigation Calendar · Sources · Events · Settings · Log · Log out. All copy from `strings.rs`.
 
-- [ ] **Step 1: Write the failing tests** — `b64url_round_trip_and_no_padding`, `api_maps_409_confirm_required` (pure mapping from status + JSON body), `api_maps_401_to_unauthorized`.
+- [x] **Step 1: Write the failing tests** — `b64url_round_trip_and_no_padding`, `api_maps_409_confirm_required` (pure mapping from status + JSON body), `api_maps_401_to_unauthorized`.
 - [ ] **Step 2: Run** `cargo test -p kairos-web` — FAIL. **Step 3: Implement** the shell, `api.rs`, `passkey.rs`, setup and login pages. **Step 4: Run** `cargo xtask build` — PASS, `crates/kairos-web/dist` contains `index.html`, `boot.js`, `_headers`, `kairos-web.js`, `kairos-web_bg.wasm`; open `npx wrangler dev` → setup page loads with no CSP errors in the console (check manually; Task 17 automates it).
-- [ ] **Step 5: Commit** — `feat: Leptos shell, browser passkeys and setup/login`
+- [x] **Step 5: Commit** — `feat: Leptos shell, browser passkeys and setup/login`
 
 ---
 
@@ -1015,9 +1017,9 @@ Pages (§13.1 table — implement every capability listed there):
 - **Settings:** zone (select from a short list + free text), default lead, all-day time; while `GET /api/admin/queue` > 0 poll every 2 s and show `Recomputing reminders… N left`; Bark config + "Send test notification"; passkeys (add, rename, revoke with `confirm_dialog` on `409 confirm_required`, stale badge); tokens (create shows the token once, revoke); export links.
 - **Log:** failed reminders pinned; deliveries; failing sources; expansion warnings; background errors.
 
-- [ ] **Step 1: Write the failing tests** — `month_grid_starts_monday` (2026-11 → 6 rows, first cell 2026-10-26, last cell 2026-12-06), `three_day_all_day_placed_on_each_day`, `week_of_sunday_returns_previous_monday` (2026-11-22 → first day 2026-11-16).
+- [x] **Step 1: Write the failing tests** — `month_grid_starts_monday` (2026-11 → 6 rows, first cell 2026-10-26, last cell 2026-12-06), `three_day_all_day_placed_on_each_day`, `week_of_sunday_returns_previous_monday` (2026-11-22 → first day 2026-11-16).
 - [ ] **Step 2: Run** `cargo test -p kairos-web calendar_grid` — FAIL. **Step 3: Implement** the grid and the pages. **Step 4: Run** — PASS; `cargo xtask build` — PASS.
-- [ ] **Step 5: Commit** — `feat: calendar, sources, events, settings and log pages`
+- [x] **Step 5: Commit** — `feat: calendar, sources, events, settings and log pages`
 
 ---
 
@@ -1030,7 +1032,7 @@ Pages (§13.1 table — implement every capability listed there):
 **Interfaces:**
 - Produces: `POST /__test/clock { offset_ms }` → stores the offset; `POST /__test/alarm` → runs `run_alarm()` once and returns the `AlarmReport` as JSON (both exist only with `test-hooks`). `Browser::launch() -> Browser` (chromiumoxide, headless Chrome; `WebAuthn.enable` + `WebAuthn.addVirtualAuthenticator { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true }`). `xtask deploy`: refuses if `--features test-hooks` would be used or `wrangler.toml` still contains `CHANGE-ME`; runs `build`, `npx wrangler deploy`, prints `startup_time_ms`.
 
-- [ ] **Step 1: Write the failing test** `crates/e2e/tests/smoke.rs::full_journey`
+- [x] **Step 1: Write the failing test** `crates/e2e/tests/smoke.rs::full_journey`
   1. `/` → redirected to `/setup`; enter `correct horse`; register a passkey (virtual authenticator); land on `/calendar`; no console messages containing `Content-Security-Policy`.
   2. Settings: Bark server = `MockServer::url("/bark")`, device key `k`; "Send test notification" → mock received one push.
   3. Events: create manual event "Dentist <b>x</b>" today + 2 h, reminders Custom `[30]`.
@@ -1040,9 +1042,9 @@ Pages (§13.1 table — implement every capability listed there):
   7. Log out → `/login` → passkey login → `/calendar`.
   8. Save the registration and login JSON captured from the network as `crates/kairos-testkit/fixtures/chrome_registration.json` / `chrome_login.json` (first run only; committed) and add `kairos-testkit/tests/webauthn.rs::chrome_fixture_verifies` that verifies them with `rp_id = "localhost"`, `origin = "http://localhost:8799"`, the challenges decoded from each fixture's `clientDataJSON`, and the user id from the registration options.
 - [ ] **Step 2: Run** `cargo xtask e2e` — FAIL (hooks and browser helper missing).
-- [ ] **Step 3: Implement** the hooks, the browser helper, `xtask deploy`, and the README (prerequisites: Rust stable + nightly via `worker-build`, Trunk, Node for wrangler, Chrome for e2e; first deploy: set `RP_ID`/`ORIGIN`, `wrangler secret put RECOVERY_CODE` / `SESSION_SECRET`, `cargo xtask deploy`, open `/setup`; operations: Log page, `wrangler tail --format json`, domain change → recovery flow; Paid plan if CPU limits are hit). If `__Host-` cookies are refused on `http://localhost` by the test browser, record it in the notes and run e2e with `wrangler dev --local-protocol https` instead (and `ORIGIN = "https://localhost:8799"`).
+- [x] **Step 3: Implement** the hooks, the browser helper, `xtask deploy`, and the README (prerequisites: Rust stable + nightly via `worker-build`, Trunk, Node for wrangler, Chrome for e2e; first deploy: set `RP_ID`/`ORIGIN`, `wrangler secret put RECOVERY_CODE` / `SESSION_SECRET`, `cargo xtask deploy`, open `/setup`; operations: Log page, `wrangler tail --format json`, domain change → recovery flow; Paid plan if CPU limits are hit). If `__Host-` cookies are refused on `http://localhost` by the test browser, record it in the notes and run e2e with `wrangler dev --local-protocol https` instead (and `ORIGIN = "https://localhost:8799"`).
 - [ ] **Step 4: Run** `cargo xtask test && cargo xtask e2e` — PASS. Then, on a real deployment (manual, with the user): record in `docs/rust-on-workers-notes.md` `startup_time_ms`, backend and web Wasm sizes, and `cpuTime` from `wrangler tail` for one sync of the largest real feed (§3 ⚠️1, ⚠️2).
-- [ ] **Step 5: Commit** — `test: browser end-to-end journey; docs and deploy tooling`
+- [x] **Step 5: Commit** — `test: browser end-to-end journey; docs and deploy tooling`
 
 ---
 

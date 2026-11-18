@@ -1,11 +1,36 @@
 use e2e::{MockServer, WranglerDev};
 use serde_json::json;
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the local Worker uses the real time for alarms"
+)]
 #[tokio::test]
 async fn worker_and_sqlite_adapter_lifecycle() {
     let mut worker = WranglerDev::start().await;
     assert_eq!(worker.get("/api/health").await, json!({"ok": true}));
-    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "1");
+    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "2");
+
+    let public = worker
+        .request(reqwest::Method::POST, "/internal/rearm")
+        .send()
+        .await
+        .unwrap();
+    assert!(matches!(
+        public.status(),
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+    ));
+    assert_eq!(
+        worker.get("/__test/adapter/watchdog").await["at"],
+        json!(null)
+    );
+    let scheduled = worker
+        .request(reqwest::Method::GET, "/cdn-cgi/local/scheduled")
+        .send()
+        .await
+        .unwrap();
+    assert!(scheduled.status().is_success());
+    assert!(worker.get("/__test/adapter/watchdog").await["at"].is_string());
 
     let panic_response = worker
         .post_response("tx-rollback", json!({"panic": true}))
@@ -41,7 +66,7 @@ async fn worker_and_sqlite_adapter_lifecycle() {
         reqwest::StatusCode::INTERNAL_SERVER_ERROR
     );
     worker.restart().await;
-    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "1");
+    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "2");
     assert_eq!(worker.get("/__test/adapter/alarm").await["at"], at);
 
     let mock = MockServer::start().await;

@@ -212,6 +212,7 @@ CREATE TABLE events (
   all_day INTEGER NOT NULL, start_local TEXT NOT NULL, tzid TEXT, duration_sec INTEGER NOT NULL, rrule TEXT,
   exdates TEXT NOT NULL DEFAULT '[]', lead_minutes TEXT, valarm_minutes TEXT NOT NULL DEFAULT '[]',
   hash TEXT NOT NULL, updated_at INTEGER NOT NULL,
+  initial_start_utc INTEGER,            -- exact API start when local time is ambiguous
   expand_anchor TEXT,              -- JSON {slot, index, hash}: resume point for recurrence expansion (§7.4)
   expand_status TEXT NOT NULL DEFAULT 'complete',   -- 'complete' | 'catching_up' | 'too_dense'
   expand_warning TEXT);
@@ -288,7 +289,7 @@ Each `alarm()` runs these steps in order. Each step has a budget, writes its pes
 
 A top-level `catch_unwind` around the whole sequence is the last line of defence (§7.2). The `alarm()` handler always returns `Ok`, so the runtime's own retry (§3) only ever sees invocations that were killed, never ones that failed in code.
 
-**Maintenance pass (daily):** queue every *recurring* parent series with reason `roll` (the 60-day window moves forward; non-recurring events need nothing); delete `deliveries` and non-`pending` reminders older than 90 days; delete expired `sessions`; delete `auth_failures` older than 1 hour; set `meta:last_maintenance_at = now`.
+**Maintenance pass (daily):** queue recurring parent series and events entering the 60-day window with reason `roll`. Record `meta:last_window_roll_at` on a successful roll, so a delayed maintenance run covers the intervening days; delete `deliveries` and non-`pending` reminders older than 90 days; delete expired `sessions`; delete `auth_failures` older than 1 hour; set `meta:last_maintenance_at = now`.
 
 ### 7.2 Next-alarm computation and backoff
 
@@ -323,7 +324,7 @@ Together with Invariant 2, this bounds worst-case wake-ups: even a step that fai
   - settings change: `timezone` / `allDayTime` → floating and all-day series; `defaultLeadMin` → all series;
   - source settings change (including `enabled` and `notify`): that source's series;
   - source sync: each changed, created, or pruned series;
-  - daily window roll: recurring series.
+  - daily window roll: recurring series and one-off events newly inside the 60-day horizon.
 
   The response returns immediately. The UI shows "Recomputing reminders… N left" from the queue length. The queue drains at 10 series per wake, about one wake per second.
 
@@ -447,7 +448,7 @@ An alarm can still be lost: if the runtime kills the same alarm invocation 7 tim
 - **Two time-zone databases:** `rrule` depends on `chrono-tz`, but it is only used in floating (UTC-labelled) time, so its database never decides an offset. Only `jiff` does. The cost is binary size and startup time (§3 ⚠️2).
 - **Recurring events** iterate in wall-clock time and convert each instance separately.
 - **Floating times** (`tzid NULL`) and **all-day events** follow the user time zone. Changing the time zone or the all-day time re-queues every affected series.
-- **API times with an explicit offset** are stored as wall-clock time in `timezone ?? userTz`, with that zone made explicit. Their instant stays fixed if the user later changes the time zone.
+- **API times with an explicit offset** are stored as wall-clock time in `timezone ?? userTz`, with that zone made explicit. Their instant stays fixed if the user later changes the time zone. When the wall time alone cannot recover the supplied instant, such as the later half of a fall-back overlap, the row also stores `initial_start_utc`. Only the recurrence slot matching the original start uses that value. Other slots are resolved in the stored time zone using the rules above.
 - **The browser never converts zones.** Calendar responses carry both the UTC instant and the wall-clock strings in the user's zone (`start_local`, `end_local`), so the web app needs no time-zone database.
 
 ## 9. ICS Support Matrix

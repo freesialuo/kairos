@@ -22,3 +22,17 @@ Wrangler read one placeholder asset from `crates/kairos-web/dist`. The optimized
 `getrandom` 0.4.3 builds for `wasm32-unknown-unknown` with the `wasm_js` Cargo feature. The commit probe exercises the WebCrypto backend in the local Workers runtime. No `getrandom_backend` Rust flag or `.cargo/config.toml` change was needed. [getrandom WebAssembly backend](https://docs.rs/getrandom/0.4.3/getrandom/#webassembly-support)
 
 The local Wrangler lifecycle test verified that a Rust panic rolls back a SQLite write and leaves the Durable Object able to handle another transaction. It also verified explicit rollback, a successful storage sync, alarm persistence across restart, rejection of an invalid alarm time, and chunked fetches at and above the 5 MiB cap.
+
+The development Wasm glue logs a diagnostic when the rollback callback deliberately throws. The transaction catches that exception and preserves the original Rust result. The release glue omits the debug diagnostic.
+
+## Watchdog
+
+The local scheduled event reached the Durable Object and recorded that it rearmed the missing alarm. The public `POST /internal/rearm` was rejected. The Durable Object logs alarm-cycle failures and completes the alarm callback. The scheduled watchdog checks for a missing alarm on its next run.
+
+The full scheduler triggered a compiler crash in LLVM’s WebAssembly exception lowering at the default Rust release optimization level. The Worker release build uses `opt-level = 1` for `kairos-worker`, full link-time optimization, and `--panic-unwind`, then runs `wasm-opt`. The full application dry run reported 3,817,259 bytes of Worker Wasm, 3,774.83 KiB total upload size, and 1,243.85 KiB gzip. [LLVM WebAssembly exception lowering source](https://llvm.org/doxygen/WebAssemblyCFGStackify_8cpp_source.html)
+
+## Browser and production checks
+
+The optimized browser Wasm measured 833,162 bytes. Headless Chrome accepted secure host-prefixed cookies on HTTP localhost, completed both passkey ceremonies, and delivered a reminder to the local Bark stand-in. The Content Security Policy check passed. The registration and login fixtures also replay in the native and WebAssembly verifier tests.
+
+Cloudflare startup time, real largest-feed CPU, and real-device Bark delivery require the owner's deployment. Record the startup time from the first deploy and the largest-feed sync's CPU from Workers invocation telemetry. Hard Wasm trap recovery on Cloudflare also remains unmeasured.

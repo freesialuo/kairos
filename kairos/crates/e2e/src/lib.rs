@@ -2,7 +2,7 @@
 use axum::{
     Router,
     body::{Body, Bytes},
-    extract::Path,
+    extract::{Path, State},
     http::StatusCode,
     routing::{get, post},
 };
@@ -12,37 +12,51 @@ use std::{
     convert::Infallible,
     path::{Path as FsPath, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::{net::TcpListener, task::JoinHandle};
 
+#[cfg(feature = "browser")]
+pub mod browser;
+
+type Pushes = Arc<Mutex<Vec<Value>>>;
+
 pub struct MockServer {
     origin: String,
     server: JoinHandle<()>,
+    pushes: Pushes,
 }
 
 impl MockServer {
     pub async fn start() -> Self {
+        let pushes = Pushes::default();
         let app = Router::new()
             .route("/big/{mb}", get(chunked_body))
-            .route(
-                "/bark/push",
-                post(|| async { axum::Json(json!({"code": 200})) }),
-            )
+            .route("/bark/push", post(record_push))
             .route(
                 "/feeds/{name}",
                 get(|| async { "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n" }),
-            );
+            )
+            .with_state(pushes.clone());
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind mock HTTP server");
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Self { origin, server }
+        Self {
+            origin,
+            server,
+            pushes,
+        }
     }
 
     pub fn url(&self, path: &str) -> String {
         format!("{}{path}", self.origin)
+    }
+
+    pub fn pushes(&self) -> Vec<Value> {
+        self.pushes.lock().expect("mock Bark pushes").clone()
     }
 }
 
@@ -58,6 +72,14 @@ async fn chunked_body(Path(mb): Path<u8>) -> Body {
         (0..usize::from(mb) * 16).map(move |_| Ok::<_, Infallible>(chunk.clone())),
     );
     Body::from_stream(stream)
+}
+
+async fn record_push(
+    State(pushes): State<Pushes>,
+    axum::Json(payload): axum::Json<Value>,
+) -> axum::Json<Value> {
+    pushes.lock().expect("mock Bark pushes").push(payload);
+    axum::Json(json!({"code": 200}))
 }
 
 pub struct WranglerDev {
@@ -84,11 +106,16 @@ impl WranglerDev {
         worker
     }
 
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "local emulator readiness needs a real monotonic deadline"
+    )]
     async fn launch(&mut self) {
         let listener = std::net::TcpListener::bind("127.0.0.1:8799")
             .expect("port 8799 is in use; refusing to use another Worker");
         drop(listener);
         let mut cmd = Command::new("npx");
+        let state_dir = format!("target/e2e-state/{}", std::process::id());
         cmd.current_dir(&self.root)
             .args([
                 "--yes",
@@ -102,7 +129,7 @@ impl WranglerDev {
                 "--port",
                 "8799",
                 "--persist-to",
-                "target/e2e-state",
+                &state_dir,
                 "--var",
                 "RECOVERY_CODE:correct horse",
                 "--var",
@@ -155,9 +182,12 @@ impl WranglerDev {
         self.launch().await;
     }
 
+    pub fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        self.client.request(method, format!("{ORIGIN}{path}"))
+    }
+
     pub async fn get(&self, path: &str) -> Value {
-        self.client
-            .get(format!("{ORIGIN}{path}"))
+        self.request(reqwest::Method::GET, path)
             .send()
             .await
             .unwrap()
@@ -179,8 +209,7 @@ impl WranglerDev {
     }
 
     pub async fn post_response(&self, probe: &str, body: Value) -> reqwest::Response {
-        self.client
-            .post(format!("{ORIGIN}/__test/adapter/{probe}"))
+        self.request(reqwest::Method::POST, &format!("/__test/adapter/{probe}"))
             .json(&body)
             .send()
             .await

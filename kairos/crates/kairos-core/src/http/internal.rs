@@ -16,6 +16,21 @@ fn payload<T: serde::de::DeserializeOwned>(req: &Request) -> Result<T, CoreError
 
 pub(super) async fn adapter<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Response, CoreError> {
     let result = match (req.method, req.path.as_str()) {
+        (Method::Post, "/__test/clock") => {
+            #[derive(Deserialize)]
+            struct Offset {
+                offset_ms: i64,
+            }
+            let offset: Offset = payload(req)?;
+            crate::db::settings::set_meta(
+                &hub.db,
+                "test_clock_offset_ms",
+                &offset.offset_ms.to_string(),
+            )?;
+            json!({"now":hub.now()})
+        }
+        (Method::Post, "/__test/alarm") => serde_json::to_value(hub.run_alarm().await)
+            .map_err(|e| CoreError::Internal(e.to_string()))?,
         (Method::Post, "/__test/adapter/tx-rollback") => {
             #[derive(Deserialize)]
             struct Body {
@@ -75,6 +90,9 @@ pub(super) async fn adapter<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Res
         (Method::Get, "/__test/adapter/alarm") => json!({"at": hub.alarm.get().await?}),
         (Method::Get, "/__test/adapter/schema") => {
             json!({"version": crate::db::settings::get_meta(&hub.db, "schema_version")})
+        }
+        (Method::Get, "/__test/adapter/watchdog") => {
+            json!({"at": crate::db::settings::read_meta(&hub.db, "last_watchdog_at")?})
         }
         (Method::Post, "/__test/adapter/fetch") => {
             #[derive(Deserialize)]

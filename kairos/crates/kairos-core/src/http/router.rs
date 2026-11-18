@@ -40,7 +40,7 @@ impl<P: Ports> Hub<P> {
             ));
         }
         #[cfg(feature = "test-hooks")]
-        if self.config.allow_http_urls && req.path.starts_with("/__test/adapter/") {
+        if self.config.allow_http_urls && req.path.starts_with("/__test/") {
             return super::internal::adapter(self, &req).await;
         }
         let router = ROUTES
