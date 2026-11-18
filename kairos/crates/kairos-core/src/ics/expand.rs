@@ -221,7 +221,10 @@ fn single_occurrence(
     window: &std::ops::Range<i64>,
 ) -> Option<Occurrence> {
     let wall = as_datetime(parse_wall(&event.row.start_local).ok()?);
-    let start_utc = wall_to_utc(wall, zone).ok()?;
+    let start_utc = match event.row.initial_start_utc {
+        Some(at) => at,
+        None => wall_to_utc(wall, zone).ok()?,
+    };
     if !window.contains(&start_utc) {
         return None;
     }
@@ -278,7 +281,16 @@ impl Recurrence<'_> {
             return None;
         }
         let wall = as_datetime(parse_wall(&anchor.slot).ok()?);
-        if wall_to_utc(wall, self.zone).ok()? > self.window.start {
+        let anchor_at = if anchor.slot == self.event.row.start_local {
+            self.event.row.initial_start_utc
+        } else {
+            None
+        };
+        let anchor_at = match anchor_at {
+            Some(at) => at,
+            None => wall_to_utc(wall, self.zone).ok()?,
+        };
+        if anchor_at > self.window.start {
             return None;
         }
         let start = rule_start(wall)?;
@@ -330,18 +342,26 @@ impl Recurrence<'_> {
         let end = self
             .until_utc
             .map_or(self.window.end, |until| self.window.end.min(until + 1));
+        let initial_start = self.event.row.initial_start_utc.and_then(|at| {
+            parse_wall(&self.event.row.start_local)
+                .ok()
+                .map(|value| (as_datetime(value), at))
+        });
         for (index, slot) in set.into_iter().enumerate() {
             let Ok(instant) = Timestamp::from_millisecond(slot.timestamp_millis()) else {
                 break;
             };
             let wall = TimeZone::UTC.to_datetime(instant);
-            let Ok(start) = wall_to_utc(wall, self.zone) else {
+            let Ok(compatible) = wall_to_utc(wall, self.zone) else {
                 break;
             };
+            let start = initial_start
+                .filter(|(initial_wall, _)| *initial_wall == wall)
+                .map_or(compatible, |(_, at)| at);
 
             // A slot shifted forward out of a gap can overtake an existing slot.
             // Only an existing wall slot is a safe end of the UTC window.
-            if start >= end && utc_to_wall(start, self.zone) == Ok(wall) {
+            if compatible >= end && start >= end && utc_to_wall(compatible, self.zone) == Ok(wall) {
                 break;
             }
             // The anchor's index still counts, but replaying a slot already
@@ -430,6 +450,7 @@ mod tests {
             location: None,
             all_day: start.len() == 10,
             start_local: start.into(),
+            initial_start_utc: None,
             tzid: Some(zone.into()),
             duration_sec: if start.len() == 10 { 86_400 } else { 3_600 },
             rrule: Some(rule.into()),

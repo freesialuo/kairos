@@ -51,6 +51,7 @@ CREATE TABLE api_tokens (
   created_at INTEGER NOT NULL, last_used_at INTEGER);
 CREATE TABLE auth_failures (at INTEGER NOT NULL);
 "#,
+    "ALTER TABLE events ADD COLUMN initial_start_utc INTEGER;",
 ];
 
 pub fn migrate(db: &impl Db) -> Result<(), CoreError> {

@@ -22,6 +22,7 @@ fn ics_row() -> EventRow {
         location: None,
         all_day: false,
         start_local: "2026-11-23T09:00:00".into(),
+        initial_start_utc: None,
         tzid: Some("Europe/Berlin".into()),
         duration_sec: 3600,
         rrule: Some("FREQ=WEEKLY".into()),

@@ -144,6 +144,7 @@ async fn one_off_enters_the_window_after_maintenance_rolls_it() {
                     all_day: false,
                     start_local: wall.into(),
                     tzid: Some(zone.into()),
+                    initial_start_utc: None,
                     duration_sec: 0,
                     rrule: None,
                     exdates: Vec::new(),

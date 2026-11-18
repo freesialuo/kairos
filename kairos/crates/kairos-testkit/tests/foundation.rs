@@ -1,8 +1,11 @@
 use kairos_core::{
     CoreError, Db,
-    db::settings::{get_meta, get_settings},
+    db::{
+        schema::migrate,
+        settings::{get_meta, get_settings, set_meta},
+    },
 };
-use kairos_testkit::TestHub;
+use kairos_testkit::{Faults, SqliteDb, TestHub};
 
 #[tokio::test]
 async fn migration_creates_all_tables_and_is_idempotent() {
@@ -29,7 +32,36 @@ async fn migration_creates_all_tables_and_is_idempotent() {
             "sources"
         ]
     );
-    assert_eq!(get_meta(&h.db, "schema_version").as_deref(), Some("1"));
+    assert_eq!(get_meta(&h.db, "schema_version").as_deref(), Some("2"));
+}
+
+#[test]
+fn migration_preserves_v1_event_rows() {
+    let db = SqliteDb::new(Faults::default());
+    db.exec(
+        "CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
+        &[],
+    )
+    .unwrap();
+    db.exec(
+        "CREATE TABLE events(id INTEGER PRIMARY KEY,title TEXT NOT NULL)",
+        &[],
+    )
+    .unwrap();
+    db.exec(
+        "INSERT INTO events(id,title) VALUES(7,'Existing event')",
+        &[],
+    )
+    .unwrap();
+    set_meta(&db, "schema_version", "1").unwrap();
+
+    migrate(&db).unwrap();
+    let rows = db
+        .exec("SELECT title,initial_start_utc FROM events WHERE id=7", &[])
+        .unwrap();
+    assert_eq!(rows[0].text("title").unwrap(), "Existing event");
+    assert_eq!(rows[0].opt_i64("initial_start_utc").unwrap(), None);
+    assert_eq!(get_meta(&db, "schema_version").as_deref(), Some("2"));
 }
 #[tokio::test]
 async fn settings_have_spec_defaults() {

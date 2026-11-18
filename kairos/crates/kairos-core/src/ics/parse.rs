@@ -235,6 +235,7 @@ fn parse_event(
         location: value(properties, "LOCATION").map(unescape_text),
         all_day,
         start_local: format_wall(&wall),
+        initial_start_utc: None,
         tzid: tzid.map(str::to_owned),
         duration_sec: event_duration(properties, wall, tzid),
         rrule,

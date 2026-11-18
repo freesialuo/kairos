@@ -26,6 +26,7 @@ fn event(key: &str) -> EventRow {
         location: None,
         all_day: false,
         start_local: "2026-11-21T10:00:00".into(),
+        initial_start_utc: None,
         tzid: Some("UTC".into()),
         duration_sec: 3600,
         rrule: None,

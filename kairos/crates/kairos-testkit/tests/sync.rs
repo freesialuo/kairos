@@ -34,6 +34,13 @@ fn src(h: &TestHub) -> SourceRow {
     get_source(&h.db, 1).unwrap().unwrap()
 }
 
+fn install_bark(h: &TestHub) {
+    h.sql(
+        r#"INSERT INTO channels (kind, config) VALUES
+       ('bark', '{"server":"https://bark.test","device_key":"device"}')"#,
+    );
+}
+
 async fn sync_with(h: &TestHub, body: &[u8]) -> SyncSummary {
     h.http().respond(FEED, 200, &[], body);
     sync_source(h, &src(h), h.now()).await.unwrap()
@@ -296,10 +303,7 @@ async fn killed_sync_leaves_interrupted_trace_and_is_not_redone() {
 #[tokio::test]
 async fn third_failure_alerts_once_even_if_killed() {
     let h = hub();
-    h.sql(
-        r#"INSERT INTO channels (kind, config) VALUES
-       ('bark', '{"server":"https://bark.test","device_key":"device"}')"#,
-    );
+    install_bark(&h);
     for _ in 0..2 {
         h.http().respond(FEED, 503, &[], &[]);
         sync_due_source(&h, h.now()).await;
@@ -346,6 +350,23 @@ async fn third_failure_alerts_once_even_if_killed() {
         1
     );
     assert_eq!(h.sql("SELECT * FROM deliveries").len(), 1);
+}
+
+#[tokio::test]
+async fn killed_alert_keeps_the_at_most_once_trace() {
+    let h = hub();
+    install_bark(&h);
+    h.sql("UPDATE sources SET consecutive_failures = 3, last_error = 'HTTP 503'");
+    h.faults()
+        .kill_after_sql_matching("UPDATE sources SET alerted = 1");
+    h.http().respond(BARK, 200, &[], br#"{"code":200}"#);
+    assert!(send_source_alerts(&h, h.now()).now_or_never().is_none());
+    assert!(src(&h).alerted);
+
+    let replay = send_source_alerts(&h, h.now()).await;
+    assert_eq!((replay.ok, replay.failed, replay.step_error), (0, 0, None));
+    assert!(h.http().requests().is_empty());
+    assert!(h.sql("SELECT * FROM deliveries").is_empty());
 }
 
 #[tokio::test]

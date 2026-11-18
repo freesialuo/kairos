@@ -13,8 +13,8 @@ use super::{
 const WRITE_EVENT: &str = "
 INSERT INTO events (id, origin, source_id, series_key, uid, recurrence_id, external_id,
     title, description, location, all_day, start_local, tzid, duration_sec, rrule, exdates,
-    lead_minutes, valarm_minutes, hash, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+    lead_minutes, valarm_minutes, hash, updated_at, initial_start_utc)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
 ON CONFLICT (series_key, COALESCE(recurrence_id, '')) DO UPDATE SET
     origin = excluded.origin,
     source_id = excluded.source_id,
@@ -26,6 +26,7 @@ ON CONFLICT (series_key, COALESCE(recurrence_id, '')) DO UPDATE SET
     location = excluded.location,
     all_day = excluded.all_day,
     start_local = excluded.start_local,
+    initial_start_utc = excluded.initial_start_utc,
     tzid = excluded.tzid,
     duration_sec = excluded.duration_sec,
     rrule = excluded.rrule,
@@ -171,6 +172,7 @@ fn write_event(
             Value::Text(serde_json::json!(row.valarm_minutes).to_string()),
             Value::Text(hash.to_owned()),
             Value::Integer(now),
+            optional_integer(row.initial_start_utc),
         ],
     )?;
     let written = rows
@@ -179,7 +181,7 @@ fn write_event(
     Ok(written.i64("id")?)
 }
 
-fn event_from_row(row: &Row) -> Result<StoredEvent, CoreError> {
+pub(crate) fn event_from_row(row: &Row) -> Result<StoredEvent, CoreError> {
     let origin = match row.text("origin")?.as_str() {
         "ics" => Origin::Ics,
         "api" => Origin::Api,
@@ -206,6 +208,7 @@ fn event_from_row(row: &Row) -> Result<StoredEvent, CoreError> {
             location: row.opt_text("location")?,
             all_day: row.bool("all_day")?,
             start_local: row.text("start_local")?,
+            initial_start_utc: row.opt_i64("initial_start_utc")?,
             tzid: row.opt_text("tzid")?,
             duration_sec: row.i64("duration_sec")?,
             rrule: row.opt_text("rrule")?,

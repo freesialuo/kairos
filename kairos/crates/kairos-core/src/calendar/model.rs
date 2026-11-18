@@ -22,6 +22,9 @@ pub struct EventRow {
     pub location: Option<String>,
     pub all_day: bool,
     pub start_local: String,
+    /// Exact start for the initial slot when local time cannot recover the API instant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_start_utc: Option<i64>,
     pub tzid: Option<String>,
     pub duration_sec: i64,
     pub rrule: Option<String>,

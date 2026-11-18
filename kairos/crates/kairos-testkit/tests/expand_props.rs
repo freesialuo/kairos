@@ -57,6 +57,7 @@ proptest! {
             location: None,
             all_day: false,
             start_local: start.to_string(),
+            initial_start_utc: None,
             tzid: Some(zone.into()),
             duration_sec: 3_600,
             rrule: Some(rule.clone()),

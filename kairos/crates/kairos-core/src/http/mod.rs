@@ -1,3 +1,5 @@
+pub mod api_v1;
+pub mod validate;
 pub(crate) mod auth_routes;
 #[cfg(feature = "test-hooks")]
 mod internal;

@@ -27,6 +27,9 @@ impl<P: Ports> Hub<P> {
         if req.path.starts_with("/auth/") {
             return super::auth_routes::route(self, &req);
         }
+        if req.path.starts_with("/api/v1/") {
+            return super::api_v1::route(self, &req).await;
+        }
         if req.path.starts_with("/api/admin/") {
             crate::auth::session::require_full_session(self, &req)?;
         }
