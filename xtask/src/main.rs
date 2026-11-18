@@ -1,5 +1,7 @@
 use std::{
-    env, fs, io,
+    env,
+    ffi::OsStr,
+    fs, io,
     path::Path,
     process::{Command, ExitCode},
 };
@@ -102,13 +104,46 @@ fn test() -> io::Result<bool> {
     ])
 }
 
+fn deploy(secrets_file: Option<&Path>) -> io::Result<bool> {
+    if fs::read_to_string("wrangler.toml")?.contains("CHANGE-ME") {
+        return Err(io::Error::other(
+            "Set RP_ID and ORIGIN in wrangler.toml before deployment.",
+        ));
+    }
+    if env::vars_os().any(|(k, v)| {
+        k == "CARGO_FEATURE_TEST_HOOKS"
+            || (k == "RUSTFLAGS" || k == "CARGO_ENCODED_RUSTFLAGS")
+                && v.to_string_lossy().contains("test-hooks")
+    }) {
+        return Err(io::Error::other(
+            "Production deployment cannot enable test hooks.",
+        ));
+    }
+
+    let mut upload = Command::new("npx");
+    upload.args(["--yes", "wrangler@4.164.0", "deploy", "--env", ""]);
+    if let Some(path) = secrets_file {
+        if !path.is_file() || fs::File::open(path).is_err() {
+            return Err(io::Error::other("--secrets-file must be a readable file."));
+        }
+        upload.arg("--secrets-file").arg(path);
+    }
+    Ok(build()? && upload.status()?.success())
+}
+
 fn main() -> io::Result<ExitCode> {
+    let caller_dir = env::current_dir()?;
     env::set_current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))?;
-    let mut args = env::args().skip(1);
-    let success = match (args.next().as_deref(), args.next()) {
-        (Some("test"), None) => test()?,
-        (Some("build"), None) => build()?,
-        (Some("e2e"), None) => {
+    let mut args = env::args_os().skip(1);
+    let command = args.next();
+    let remaining: Vec<_> = args.collect();
+    let success = match (
+        command.as_deref().and_then(OsStr::to_str),
+        remaining.as_slice(),
+    ) {
+        (Some("test"), []) => test()?,
+        (Some("build"), []) => build()?,
+        (Some("e2e"), []) => {
             web_build()?
                 && cargo(&[
                     "test",
@@ -121,29 +156,12 @@ fn main() -> io::Result<ExitCode> {
                     "--test-threads=1",
                 ])?
         }
-        (Some("deploy"), None) => {
-            if fs::read_to_string("wrangler.toml")?.contains("CHANGE-ME") {
-                return Err(io::Error::other(
-                    "Set RP_ID and ORIGIN in wrangler.toml before deployment.",
-                ));
-            }
-            if env::vars_os().any(|(k, v)| {
-                k == "CARGO_FEATURE_TEST_HOOKS"
-                    || (k == "RUSTFLAGS" || k == "CARGO_ENCODED_RUSTFLAGS")
-                        && v.to_string_lossy().contains("test-hooks")
-            }) {
-                return Err(io::Error::other(
-                    "Production deployment cannot enable test hooks.",
-                ));
-            }
-            build()?
-                && Command::new("npx")
-                    .args(["--yes", "wrangler@4.164.0", "deploy", "--env", ""])
-                    .status()?
-                    .success()
+        (Some("deploy"), []) => deploy(None)?,
+        (Some("deploy"), [flag, path]) if flag == "--secrets-file" => {
+            deploy(Some(&caller_dir.join(path)))?
         }
         _ => {
-            eprintln!("Usage: cargo xtask <build|test|e2e|deploy>");
+            eprintln!("Usage: cargo xtask <build|test|e2e|deploy [--secrets-file PATH]>");
             false
         }
     };

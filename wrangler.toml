@@ -25,6 +25,9 @@ crons = ["0 */6 * * *"]
 RP_ID = "CHANGE-ME"
 ORIGIN = "https://CHANGE-ME"
 
+[secrets]
+required = ["RECOVERY_CODE", "SESSION_SECRET"]
+
 [env.e2e]
 build = { command = "cargo install -q --locked --version 0.9.0 worker-build && worker-build --dev --panic-unwind --out-dir ../../build/e2e crates/kairos-worker --features test-hooks" }
 assets = { directory = "crates/kairos-web/dist", not_found_handling = "single-page-application", run_worker_first = ["/api/*", "/auth/*", "/__test/*"] }
