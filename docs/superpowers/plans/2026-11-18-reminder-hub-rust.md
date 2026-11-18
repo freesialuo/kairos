@@ -16,7 +16,7 @@ The checkboxes below record completed implementation, test coverage and final ch
 
 ## Global Constraints
 
-- **Paths** are relative to `kairos/` (the git repository root is its parent, `CodeSpace/`).
+- **Paths** are relative to the Kairos Git repository root, which contains `Cargo.toml`, `crates/`, and `docs/`.
 - **Safe file disposal:** never delete with `rm`, `rmdir`, `unlink`, `git clean`, `find -delete`, or programmatic unlink (`std::fs::remove_*` included). Move removed files to Trash (`trash <path>` or `mv <path> ~/.Trash/`).
 - **All application code is Rust.** The only hand-written non-Rust files are `crates/kairos-web/boot.js` (exact content in Task 15), `crates/kairos-web/_headers`, `crates/kairos-web/index.html`, `crates/kairos-web/style.css`, `wrangler.toml`, and Cargo/Trunk/toolchain config.
 - **Free plan:** ≤ 10 ms CPU and ≤ 50 subrequests per invocation; no KV, no D1; exactly one Cron Trigger (`0 */6 * * *`, the watchdog, §7.8).
