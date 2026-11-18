@@ -125,6 +125,8 @@ async fn deliver<P: Ports>(
     let title = event.text("title")?;
     let location = event.opt_text("location")?;
     let source = event.opt_text("source")?;
+    let reminder_key = trace.text("key")?;
+    let slot = reminder_key.rsplit('|').nth(1);
     let view = ReminderView {
         title: &title,
         location: location.as_deref(),
@@ -135,6 +137,7 @@ async fn deliver<P: Ports>(
         now,
         late,
         event_id,
+        slot,
     };
     let msg = format_reminder(&view, &hub.config.origin);
     Ok(match send_bark(&hub.http, &channel, &msg).await {

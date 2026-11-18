@@ -194,3 +194,31 @@ async fn source_switch_withdraws_and_calendar_zone_changes_across_dst() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn legacy_event_link_resolves_an_out_of_window_start_in_display_timezone() {
+    let h = TestHub::new();
+    let c = h.admin_session().await;
+    let event = send(
+        &h,
+        &c,
+        "POST",
+        "events",
+        Some(json!({
+            "title": "Tokyo appointment", "start":"2027-06-01T00:30:00",
+            "timezone":"Asia/Tokyo", "reminders":"none"
+        })),
+    )
+    .await;
+    assert_eq!(event.status, 200, "{:?}", event.json());
+    let href = format!("events/{}/calendar-date", event.json()["id"]);
+    let date = send(&h, &c, "GET", &href, None).await;
+    assert_eq!(date.status, 200);
+    assert_eq!(date.json()["date"], "2027-05-31");
+    assert_eq!(
+        send(&h, &c, "GET", "events/9999/calendar-date", None)
+            .await
+            .status,
+        404
+    );
+}

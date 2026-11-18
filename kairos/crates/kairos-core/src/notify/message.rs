@@ -1,4 +1,5 @@
 use crate::time::zone::utc_to_wall;
+use url::form_urlencoded;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
@@ -17,6 +18,7 @@ pub struct ReminderView<'a> {
     pub now: i64,
     pub late: bool,
     pub event_id: i64,
+    pub slot: Option<&'a str>,
 }
 
 pub fn format_reminder(v: &ReminderView<'_>, origin: &str) -> Message {
@@ -46,13 +48,20 @@ pub fn format_reminder(v: &ReminderView<'_>, origin: &str) -> Message {
         body.push_str(" · ");
         body.push_str(detail);
     }
+    let mut query = form_urlencoded::Serializer::new(String::new());
+    query
+        .append_pair("event", &v.event_id.to_string())
+        .append_pair("start", &v.occ_start_utc.to_string());
+    if let Some(slot) = v.slot {
+        query.append_pair("slot", slot);
+    }
     Message {
         title,
         body,
         url: Some(format!(
-            "{}/calendar?event={}",
+            "{}/calendar?{}",
             origin.trim_end_matches('/'),
-            v.event_id
+            query.finish()
         )),
     }
 }
@@ -91,6 +100,7 @@ mod tests {
             now: start - 15 * 60_000,
             late: false,
             event_id: 42,
+            slot: Some("2026-11-20T08:00:00"),
         }
     }
 
@@ -101,7 +111,10 @@ mod tests {
             Message {
                 title: "⏰ Standup".into(),
                 body: "08:00 · in 15 min · Room 2 · Work".into(),
-                url: Some("https://kairos.test/calendar?event=42".into()),
+                url: Some(
+                    "https://kairos.test/calendar?event=42&start=1795190400000&slot=2026-11-20T08%3A00%3A00"
+                        .into(),
+                ),
             }
         );
         let mut next = view();

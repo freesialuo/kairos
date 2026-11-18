@@ -6,6 +6,7 @@ use std::fmt;
 #[derive(Debug, PartialEq)]
 pub enum ApiError {
     Unauthorized,
+    NotFound,
     Confirm(String),
     Other(String),
 }
@@ -13,6 +14,7 @@ impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unauthorized => f.write_str("Please sign in."),
+            Self::NotFound => f.write_str("Item not found."),
             Self::Confirm(s) | Self::Other(s) => f.write_str(s),
         }
     }
@@ -29,6 +31,7 @@ impl JsonFields for Value {
 fn failure(status: u16, data: &Value) -> ApiError {
     match status {
         401 => ApiError::Unauthorized,
+        404 => ApiError::NotFound,
         409 if *data.field("error") == "confirm_required" => ApiError::Confirm(
             data.field("warning")
                 .as_str()
@@ -73,7 +76,10 @@ pub async fn call(method: &str, path: &str, body: Option<Value>) -> Result<Value
             && path.starts_with("/api/admin/")
             && let Some(window) = web_sys::window()
         {
-            let _ = window.location().set_href("/login");
+            let target = crate::calendar_link::current_target();
+            let _ = window
+                .location()
+                .set_href(&crate::calendar_link::href("/login", target.as_ref()));
         }
         Err(failure(status, &data))
     }

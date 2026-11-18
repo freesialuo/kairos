@@ -29,10 +29,10 @@ The development Wasm glue logs a diagnostic when the rollback callback deliberat
 
 The local scheduled event reached the Durable Object and recorded that it rearmed the missing alarm. The public `POST /internal/rearm` was rejected. The Durable Object logs alarm-cycle failures and completes the alarm callback. The scheduled watchdog checks for a missing alarm on its next run.
 
-The full scheduler triggered a compiler crash in LLVM’s WebAssembly exception lowering at the default Rust release optimization level. The Worker release build uses `opt-level = 1` for `kairos-worker`, full link-time optimization, and `--panic-unwind`, then runs `wasm-opt`. The full application dry run reported 3,817,259 bytes of Worker Wasm, 3,774.83 KiB total upload size, and 1,243.85 KiB gzip. [LLVM WebAssembly exception lowering source](https://llvm.org/doxygen/WebAssemblyCFGStackify_8cpp_source.html)
+The full scheduler triggered a compiler crash in LLVM’s WebAssembly exception lowering at the default Rust release optimization level. The Worker release build uses `opt-level = 1` for `kairos-worker`, full link-time optimization, and `--panic-unwind`, then runs `wasm-opt`. The full application dry run reported 3,842,423 bytes of Worker Wasm, 3,799.41 KiB total upload size, and 1,251.96 KiB gzip. [LLVM WebAssembly exception lowering source](https://llvm.org/doxygen/WebAssemblyCFGStackify_8cpp_source.html)
 
 ## Browser and production checks
 
-The optimized browser Wasm measured 833,162 bytes. Headless Chrome accepted secure host-prefixed cookies on HTTP localhost, completed both passkey ceremonies, and delivered a reminder to the local Bark stand-in. The Content Security Policy check passed. The registration and login fixtures also replay in the native and WebAssembly verifier tests.
+The optimized browser Wasm measured 841,321 bytes. Headless Chrome accepted secure host-prefixed cookies on HTTP localhost, completed both passkey ceremonies, and delivered a reminder to the local Bark stand-in. The Content Security Policy check passed. The registration and login fixtures also replay in the native and WebAssembly verifier tests.
 
 Cloudflare startup time, real largest-feed CPU, and real-device Bark delivery require the owner's deployment. Record the startup time from the first deploy and the largest-feed sync's CPU from Workers invocation telemetry. Hard Wasm trap recovery on Cloudflare also remains unmeasured.

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status (2026-11-18).** Tasks 1–17 are implemented and verified locally. The final run passed 176 native tests, 55 core WebAssembly tests under Node, native and WebAssembly Clippy, the Wrangler adapter lifecycle, and the real Chrome passkey and reminder journey. The production Worker deployment dry run passed. Setup and operation are documented in [the README](../../../README.md). Real Cloudflare startup time, largest-feed CPU and delivery to the owner's Bark device require the production origin and account.
+**Status (2026-11-18).** Tasks 1–17 are implemented and verified locally. The final run passed 185 native tests, 55 core WebAssembly tests under Node, native and WebAssembly Clippy, the Wrangler adapter lifecycle, and the real Chrome passkey and reminder journey. The production Worker deployment dry run passed. Setup and operation are documented in [the README](../../../README.md). Real Cloudflare startup time, largest-feed CPU and delivery to the owner's Bark device require the production origin and account.
 
 The checkboxes below record completed implementation, test coverage and final checks. An unchecked historical red-run step means that its original failing run was not independently recorded. For combined red/green instructions, the implementation and passing run are covered by the final suites.
 

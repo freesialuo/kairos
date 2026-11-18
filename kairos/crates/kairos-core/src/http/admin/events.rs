@@ -32,6 +32,9 @@ pub(super) fn route<P: Ports>(
             })
             .collect::<Result<Vec<_>, _>>()?);
     }
+    if let (Method::Get, [raw, "calendar-date"]) = (req.method, parts) {
+        return calendar_date(hub, id(raw)?);
+    }
     let existing = if let Some(raw) = parts.first() {
         let rows = hub.db.exec(
             "SELECT series_key FROM events WHERE id=?1",
@@ -142,6 +145,42 @@ pub(super) fn route<P: Ports>(
         (Method::Delete, [_], _) => Err(not_manual()),
         _ => Err(CoreError::NotFound),
     }
+}
+
+/// Resolve older notification links, which identify the event without an occurrence instant.
+fn calendar_date<P: Ports>(hub: &Hub<P>, event_id: i64) -> Result<Response, CoreError> {
+    use crate::time::zone::{utc_to_wall, wall_to_utc};
+    let rows = hub.db.exec(
+        "SELECT e.start_local,e.tzid,e.initial_start_utc,
+           CASE WHEN e.rrule IS NOT NULL THEN (
+             SELECT r.occ_start_utc FROM reminders r WHERE r.event_id=e.id
+             ORDER BY ABS(r.occ_start_utc - ?2),r.occ_start_utc LIMIT 1
+           ) END AS nearest
+         FROM events e LEFT JOIN sources s ON s.id=e.source_id
+         WHERE e.id=?1 AND (s.enabled=1 OR e.source_id IS NULL)",
+        &[V::Integer(event_id), V::Integer(hub.now())],
+    )?;
+    let row = rows.first().ok_or(CoreError::NotFound)?;
+    let settings = get_settings(&hub.db)?;
+    let error = |e: crate::time::zone::TimeError| CoreError::Internal(e.to_string());
+    let start = match row
+        .opt_i64("nearest")?
+        .or(row.opt_i64("initial_start_utc")?)
+    {
+        Some(start) => start,
+        None => {
+            let wall = match parse_wall(&row.text("start_local")?).map_err(error)? {
+                WallValue::Date(d) => d.at(0, 0, 0, 0),
+                WallValue::Timed(w) => w,
+            };
+            let zone = row.opt_text("tzid")?;
+            wall_to_utc(wall, zone.as_deref().unwrap_or(&settings.timezone)).map_err(error)?
+        }
+    };
+    let date = utc_to_wall(start, &settings.timezone)
+        .map_err(error)?
+        .date();
+    ok(json!({"date":date.to_string()}))
 }
 
 fn not_manual() -> CoreError {

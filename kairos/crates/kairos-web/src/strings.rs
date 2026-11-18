@@ -8,3 +8,4 @@ pub const PAGES: [(&str, &str); 5] = [
 pub const RECOVERY: &str = "Enter your recovery code to register a passkey for this calendar.";
 pub const REGISTER: &str = "Use a passkey to sign in from this device.";
 pub const SIGN_IN: &str = "Sign in with your passkey to open your calendar.";
+pub const LINKED_EVENT_UNAVAILABLE: &str = "The event from this reminder is unavailable.";

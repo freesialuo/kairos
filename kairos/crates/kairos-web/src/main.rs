@@ -6,6 +6,8 @@ mod app;
 mod b64;
 #[cfg(any(target_arch = "wasm32", test))]
 mod calendar_grid;
+#[cfg(any(target_arch = "wasm32", test))]
+mod calendar_link;
 #[cfg(target_arch = "wasm32")]
 mod pages;
 #[cfg(target_arch = "wasm32")]

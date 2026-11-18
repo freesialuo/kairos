@@ -1,8 +1,9 @@
 use crate::api::JsonFields as _;
 use crate::{
-    api::call,
+    api::{ApiError, call},
     app::*,
     calendar_grid::{month_grid, week_of},
+    calendar_link, strings,
 };
 use jiff::{ToSpan, civil::Date};
 use leptos::prelude::*;
@@ -19,7 +20,15 @@ fn today() -> Date {
 }
 #[component]
 pub fn Calendar(notice: Notice) -> impl IntoView {
-    let day = RwSignal::new(today());
+    let target = calendar_link::current_target();
+    let day = RwSignal::new(
+        target
+            .as_ref()
+            .and_then(|link| link.utc_day())
+            .unwrap_or_else(today),
+    );
+    let pending_link = RwSignal::new(target);
+    let looked_up_link_date = RwSignal::new(false);
     let weekly = RwSignal::new(false);
     let data = RwSignal::new(json!({}));
     let selection = RwSignal::new(None::<Value>);
@@ -31,14 +40,8 @@ pub fn Calendar(notice: Notice) -> impl IntoView {
             month_grid(day.get().year(), day.get().month())
         }
     });
-    let target = web_sys::window()
-        .and_then(|w| w.location().search().ok())
-        .and_then(|s| web_sys::UrlSearchParams::new_with_str(&s).ok())
-        .and_then(|s| s.get("event"))
-        .and_then(|id| id.parse::<i64>().ok());
-    let target_key = RwSignal::new(target);
     Effect::new(move |_| {
-        version.get();
+        let request_version = version.get();
         let weeks = grid.get();
         let Some(first) = weeks.first().and_then(|w| w.first()).copied() else {
             return;
@@ -57,22 +60,63 @@ pub fn Calendar(notice: Notice) -> impl IntoView {
                 None,
             )
             .await?;
-            if grid.get_untracked() != weeks {
+            if grid.get_untracked() != weeks || version.get_untracked() != request_version {
                 return Ok(());
             }
-            if let Some(id) = target_key.get_untracked()
-                && let Some(event) = array(response.field("occurrences"))
-                    .into_iter()
-                    .find(|v| *v.field("event_id") == id)
-            {
-                selection.set(Some(event));
-                target_key.set(None);
-            }
+            let Some(link) = pending_link.get_untracked() else {
+                data.set(response);
+                return Ok(());
+            };
+            let event = response
+                .field("occurrences")
+                .as_array()
+                .and_then(|items| items.iter().find(|occurrence| link.matches(occurrence)))
+                .cloned();
             data.set(response);
-            Ok(())
+            if let Some(event) = event {
+                pending_link.set(None);
+                if let Some(local_day) = event
+                    .field("start_local")
+                    .as_str()
+                    .and_then(calendar_link::occurrence_date)
+                {
+                    day.set(local_day);
+                }
+                selection.set(Some(event));
+                return Ok(());
+            }
+            if !looked_up_link_date.get_untracked()
+                && let Some(path) = link.legacy_date_path()
+            {
+                looked_up_link_date.set(true);
+                let response = call("GET", &path, None).await;
+                if pending_link.get_untracked().is_none()
+                    || grid.get_untracked() != weeks
+                    || version.get_untracked() != request_version
+                {
+                    return Ok(());
+                }
+                let local_day = match response {
+                    Ok(response) => response
+                        .field("date")
+                        .as_str()
+                        .and_then(|date| date.parse::<Date>().ok()),
+                    Err(ApiError::NotFound) => None,
+                    Err(error) => return Err(error),
+                };
+                if let Some(local_day) = local_day
+                    && (local_day < first || local_day > last)
+                {
+                    day.set(local_day);
+                    return Ok(());
+                }
+            }
+            pending_link.set(None);
+            Err(ApiError::Other(strings::LINKED_EVENT_UNAVAILABLE.into()))
         });
     });
     let shift = move |direction: i64| {
+        pending_link.set(None);
         let d = day.get_untracked();
         let period = if weekly.get_untracked() {
             (direction * 7).days()
@@ -86,8 +130,8 @@ pub fn Calendar(notice: Notice) -> impl IntoView {
         <div class="calendar-bar"><div class="month-nav"><button class="quiet" aria-label="Previous period" on:click=move|_|shift(-1)>"‹"</button>
           <h2>{move||day.get().strftime("%B %Y").to_string()}</h2>
           <button class="quiet" aria-label="Next period" on:click=move|_|shift(1)>"›"</button>
-          <button class="quiet" on:click=move|_|day.set(today())>"Today"</button></div>
-          <div class="segmented"><button class:active=move||!weekly.get() on:click=move|_|weekly.set(false)>"Month"</button><button class:active=move||weekly.get() on:click=move|_|weekly.set(true)>"Week"</button></div>
+          <button class="quiet" on:click=move|_|{pending_link.set(None);day.set(today());}>"Today"</button></div>
+          <div class="segmented"><button class:active=move||!weekly.get() on:click=move|_|{pending_link.set(None);weekly.set(false);}>"Month"</button><button class:active=move||weekly.get() on:click=move|_|{pending_link.set(None);weekly.set(true);}>"Week"</button></div>
         </div>
         {move||(!array(data.get().field("truncated")).is_empty()).then(||view!{<p class="notice">"Some repeating series show only the occurrences within their expansion limit."</p>})}
         <div class="calendar-grid">
@@ -107,7 +151,10 @@ pub fn Calendar(notice: Notice) -> impl IntoView {
                     <span class="day-number">{date.day()}</span>{visible.into_iter().map(|e|{
                         let title=text(&e,"title");let color=e.field("color").as_str().unwrap_or("#53745e").to_owned();
                         let time=if *e.field("all_day") ==true{String::new()}else{text(&e,"start_local").get(11..16).unwrap_or("").to_owned()};
-                        view!{<button class="event-chip" style:border-left-color=color on:click=move|_|selection.set(Some(e.clone()))>
+                        let key = text(&e, "occ_key");
+                        view!{<button class="event-chip" style:border-left-color=color
+                            aria-pressed=move||selection.with(|item| item.as_ref().is_some_and(|item| item.field("occ_key").as_str() == Some(key.as_str()))).to_string()
+                            on:click=move|_|{pending_link.set(None);selection.set(Some(e.clone()));}>
                             <small>{time}</small>{title}</button>}
                     }).collect_view()}</div>}
             }).collect_view()

@@ -1,6 +1,7 @@
 use crate::api::JsonFields as _;
 use crate::{
     api::{ApiError, call},
+    calendar_link::{self, CalendarLink},
     pages, passkey, strings,
 };
 use leptos::prelude::*;
@@ -66,11 +67,15 @@ fn Workspace() -> impl IntoView {
     let state = RwSignal::new(None::<Value>);
     let notice = RwSignal::new(String::new());
     let location = path.get_untracked();
+    let target = StoredValue::new(calendar_link::current_target());
     run(notice, async move {
         let value = call("GET", "/auth/state", None).await?;
         let scope = value.field("session").as_str();
         if scope == Some("full") && ["/", "/setup", "/login"].contains(&location.as_str()) {
-            go("/calendar");
+            go(&calendar_link::href(
+                "/calendar",
+                target.get_value().as_ref(),
+            ));
         } else if scope != Some("full") && location != "/setup" {
             let dest = if scope == Some("recovery") || *value.field("setup_required") == true {
                 "/setup"
@@ -78,7 +83,7 @@ fn Workspace() -> impl IntoView {
                 "/login"
             };
             if location != dest {
-                go(dest);
+                go(&calendar_link::href(dest, target.get_value().as_ref()));
             }
         }
         state.set(Some(value));
@@ -105,14 +110,23 @@ fn Workspace() -> impl IntoView {
                 "/log"=>view!{<pages::log::Log notice=notice/>}.into_any(),
                 _=>view!{<p>"Page unavailable. " <a rel="external" href="/calendar">"Open calendar"</a></p>}.into_any(),
             },
-            Some(auth)=>view!{<SignIn setup=path.get()=="/setup" recovery=*auth.field("session") =="recovery" fresh=*auth.field("setup_required") ==true notice=notice/>}.into_any(),
+            Some(auth)=>view!{<SignIn setup=path.get()=="/setup" recovery=*auth.field("session") =="recovery" fresh=*auth.field("setup_required") ==true notice=notice target=target.get_value()/>}.into_any(),
         }}</main>
     }
 }
 
 #[component]
-fn SignIn(setup: bool, recovery: bool, fresh: bool, notice: Notice) -> impl IntoView {
+fn SignIn(
+    setup: bool,
+    recovery: bool,
+    fresh: bool,
+    notice: Notice,
+    target: Option<CalendarLink>,
+) -> impl IntoView {
     let busy = RwSignal::new(false);
+    let setup_href = calendar_link::href("/setup", target.as_ref());
+    let recovery_href = setup_href.clone();
+    let calendar_href = calendar_link::href("/calendar", target.as_ref());
     let on_submit = move |ev| {
         let Some(data) = form(ev) else {
             return;
@@ -121,15 +135,17 @@ fn SignIn(setup: bool, recovery: bool, fresh: bool, notice: Notice) -> impl Into
             return;
         }
         busy.set(true);
+        let setup_href = setup_href.clone();
+        let calendar_href = calendar_href.clone();
         run(notice, async move {
             let result=async{
                 if recovery {
                     passkey::ceremony(true,optional(&data,"name")).await?;
                     if fresh{call("PUT","/api/admin/settings",Some(json!({"timezone":passkey::browser_zone(),"default_lead_min":15,"all_day_time":"09:00"}))).await?;}
-                    go("/calendar");
+                    go(&calendar_href);
                 }else if setup{
-                    call("POST","/auth/recovery",Some(json!({"code":value(&data,"code")}))).await?;go("/setup");
-                }else{passkey::ceremony(false,None).await?;go("/calendar");}
+                    call("POST","/auth/recovery",Some(json!({"code":value(&data,"code")}))).await?;go(&setup_href);
+                }else{passkey::ceremony(false,None).await?;go(&calendar_href);}
                 Ok(())
             }.await;
             busy.set(false);
@@ -144,6 +160,6 @@ fn SignIn(setup: bool, recovery: bool, fresh: bool, notice: Notice) -> impl Into
             {recovery.then(||view!{<label>"Passkey name"<input name="name" placeholder="This device" maxlength=200/></label>})}
             <button class="primary" disabled=move||busy.get()>{if recovery{"Register passkey"}else if setup{"Continue"}else{"Sign in with passkey"}}</button>
         </form>
-        {(!setup&&!recovery).then(||view!{<a rel="external" href="/setup">"Use recovery code"</a>})}
+        {(!setup&&!recovery).then(||view!{<a rel="external" href=recovery_href>"Use recovery code"</a>})}
     </section>}
 }

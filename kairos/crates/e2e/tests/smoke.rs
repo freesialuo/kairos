@@ -79,6 +79,11 @@ async fn full_journey() {
     browser
         .set_input("input[name='start']", start.as_str().unwrap())
         .await;
+    let expected_start = browser
+        .evaluate("Date.parse(document.querySelector(\"input[name='start']\").value)")
+        .await
+        .as_i64()
+        .unwrap();
     browser
         .set_input("select[name='reminders']", "custom")
         .await;
@@ -111,6 +116,17 @@ async fn full_journey() {
     assert_eq!(pushes.len(), 2);
     assert_eq!(pushes[1]["title"], format!("⏰ {TITLE}"));
     assert_eq!(pushes[1]["device_key"], "k");
+    let reminder_url = reqwest::Url::parse(pushes[1]["url"].as_str().expect("reminder URL"))
+        .expect("valid reminder URL");
+    assert_eq!(reminder_url.path(), "/calendar");
+    let params: std::collections::HashMap<_, _> = reminder_url.query_pairs().collect();
+    assert!(params.get("event").unwrap().parse::<i64>().unwrap() > 0);
+    assert_eq!(
+        params.get("start").unwrap().parse::<i64>().unwrap(),
+        expected_start
+    );
+    assert_eq!(params.get("slot").unwrap(), "single");
+    let reminder_path = format!("{}?{}", reminder_url.path(), reminder_url.query().unwrap());
 
     browser.click("nav a[href='/log']").await;
     browser.wait_for_page("/log", ".page-head h1").await;
@@ -128,10 +144,26 @@ async fn full_journey() {
     browser.screenshot("log").await;
     browser.click("button.logout").await;
     browser.wait_for_page("/login", SIGN_IN_BUTTON).await;
+    browser.open(&reminder_path).await;
+    browser.wait_for_page("/login", SIGN_IN_BUTTON).await;
     let (login_options, login) = browser
         .click_and_capture_passkey(SIGN_IN_BUTTON, "login")
         .await;
     browser.wait_for_page("/calendar", ".calendar-grid").await;
+    browser.wait_for(&format!(
+        "location.search === {} && document.querySelector('.drawer h2')?.textContent === {} && Array.from(document.querySelectorAll('.event-chip[aria-pressed=true]')).some(e => e.textContent.includes({}))",
+        serde_json::to_string(&format!("?{}", reminder_url.query().unwrap())).unwrap(),
+        serde_json::to_string(TITLE).unwrap(),
+        serde_json::to_string(TITLE).unwrap(),
+    )).await;
+    browser
+        .open(&format!("/calendar?event={}", params["event"]))
+        .await;
+    browser.wait_for(&format!(
+        "document.querySelector('.drawer h2')?.textContent === {} && Array.from(document.querySelectorAll('.event-chip[aria-pressed=true]')).some(e => e.textContent.includes({}))",
+        serde_json::to_string(TITLE).unwrap(),
+        serde_json::to_string(TITLE).unwrap(),
+    )).await;
     browser.assert_no_csp_errors();
     browser.close().await;
 
