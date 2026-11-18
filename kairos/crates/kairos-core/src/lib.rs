@@ -2,6 +2,7 @@ pub mod calendar {
     pub mod model;
 }
 pub mod config;
+pub mod time;
 pub mod db {
     pub mod schema;
     pub mod settings;
