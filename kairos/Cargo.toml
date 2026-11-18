@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kairos-types", "crates/kairos-core", "crates/kairos-testkit", "crates/kairos-worker", "crates/e2e", "xtask"]
+members = ["crates/kairos-types", "crates/kairos-core", "crates/kairos-testkit", "crates/kairos-worker", "crates/e2e", "crates/kairos-web", "xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -23,5 +23,8 @@ overflow-checks = true
 # wasm-bindgen needs the Wasm feature and stack metadata to wire panic recovery.
 [profile.release.package.kairos-worker]
 strip = "debuginfo"
-# LLVM Wasm exception lowering needs reduced optimization for the alarm future.
+# LLVM's Wasm exception lowering crashes on the alarm future at opt-level 3.
 opt-level = 1
+
+[profile.release.package.kairos-web]
+opt-level = "z"
