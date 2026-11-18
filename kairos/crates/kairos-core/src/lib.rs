@@ -15,6 +15,7 @@ pub mod http;
 pub mod notify;
 pub mod ports;
 pub mod sources {
+    pub mod sync;
     pub mod model;
 }
 pub mod sched {
