@@ -4,7 +4,7 @@ Kairos is a single-user calendar and reminder app for Cloudflare Workers. It imp
 
 ## Deploy to Cloudflare
 
-Follow the [step-by-step deployment guide](docs/deployment.md) to go from a fresh clone to a live Worker. It covers tool installation, Cloudflare account and hostname selection, first-deploy secrets, passkey registration, and a test reminder on your Bark device.
+[Connect GitHub to Cloudflare Workers Builds](docs/deployment.md#deploy-automatically-from-github) to deploy each push to `main`, or [deploy from a local checkout with Wrangler](docs/deployment.md#1-get-the-repository-and-build-tools). Both paths cover hostname setup, runtime secrets, passkey registration, and a test reminder on your Bark device.
 
 ## Build and test locally
 

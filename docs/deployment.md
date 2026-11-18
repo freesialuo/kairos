@@ -2,7 +2,47 @@
 
 Kairos deploys as one Worker that serves the browser app and runs the API. Wrangler also provisions the SQLite-backed `Hub` Durable Object and schedules a six-hour watchdog. The Hub stores your calendar, sign-in data, and reminder queue. Cloudflare supports SQLite-backed Durable Objects on Workers Free and Workers Paid. [Durable Object storage](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/)
 
-## 1. Get the repository and build tools
+## Deploy automatically from GitHub
+
+Cloudflare Workers Builds compiles and deploys Kairos when you push to the connected production branch. You can set this up without building Kairos locally. For a manual deployment, start with [step 1](#1-get-the-repository-and-build-tools). [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)
+
+### Prepare the GitHub repository and Worker
+
+1. In the Cloudflare account you intend to deploy to, open **Workers & Pages** and check for an existing Worker named `kairos`. Reuse an existing Worker only if it is the Kairos instance you intend to update. For a new instance, use an available name in that account and set the same `name` in `wrangler.toml`.
+2. In a GitHub repository you control, put the deployment's [hostname configuration](#3-set-the-public-hostname) in the top-level section of `wrangler.toml`. Replace both `CHANGE-ME` placeholders and commit the configuration to the production branch, typically `main`. The hosted build stops early if either placeholder remains. For an existing instance, carry over its current hostname and route settings. Keep the secret values out of Git.
+3. For a new instance, go to **Workers & Pages** → **Create application** and deploy the starter Worker with the name chosen in step 1. Open that Worker and go to **Settings** → **Variables and Secrets**. Add both of the following with type **Secret** and select **Deploy** before connecting GitHub. For an existing Kairos instance, confirm that both secrets are present and keep their current values. [Create a Worker in the dashboard](https://developers.cloudflare.com/learning-paths/workers/get-started/first-worker/#via-the-cloudflare-dashboard) · [Set runtime secrets](https://developers.cloudflare.com/workers/configuration/secrets/#via-the-dashboard)
+
+   - `RECOVERY_CODE` is a strong random code saved in your password manager for passkey setup and recovery.
+   - `SESSION_SECRET` is an independent random 32-byte value encoded as 64 hex characters. You can generate it privately with `openssl rand -hex 32`.
+
+The starter Worker lets you save the required runtime secrets before Cloudflare builds the first Kairos version. On subsequent builds, Wrangler uses the secrets already on the Worker. Use **Variables and Secrets** under the Worker settings for these two values. **Build variables and secrets** only apply to the builder. [Required Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/#validate-secrets-before-deploy) · [Build configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
+
+### Connect and configure Workers Builds
+
+Open the intended Worker in **Workers & Pages** → **Settings** → **Builds**, select **Connect**, and choose GitHub. Authorize the **Cloudflare Workers & Pages** GitHub App and install it on the account or organization that owns the repository if needed. Under **Only select repositories**, grant access to the repository you intend to deploy. An organization owner or GitHub App manager can handle the installation if needed. [Connect an existing Worker](https://developers.cloudflare.com/workers/ci-cd/builds/#connect-an-existing-worker) · [GitHub app access](https://developers.cloudflare.com/workers/ci-cd/builds/git-integration/github-integration/#manage-access)
+
+| Dashboard setting | Value |
+| --- | --- |
+| Git repository | Your Kairos repository or fork with the production hostname settings |
+| Production branch | `main`, or the branch with your production configuration |
+| Root directory | `/`, the repository root containing `wrangler.toml` |
+| Build command | `bash scripts/cloudflare-build.sh` |
+| Deploy command | `KAIROS_USE_PREBUILT=1 npx --yes wrangler@4.164.0 deploy --env ''` |
+| Enable Preview Builds | Off under **Branch control**. Kairos uses an exact production origin and this setup has no separate preview secrets or resources. |
+| Build variables and secrets | Set `NODE_VERSION` to `22.23.4` and `SKIP_DEPENDENCY_INSTALL` to `1` as plain-text build variables. |
+| API token | Use the Cloudflare-generated token for this account, or select a Cloudflare user token authorized to deploy to it. |
+
+The GitHub App grants repository access. The Cloudflare API token grants deployment access and belongs in the **API token** setting. Check that the token covers the intended account and includes Account Settings read and Workers Scripts edit permissions. If using a custom domain, the token also needs Workers Routes edit permission for the intended zone. [Build token permissions](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/#api-token) · [Build variables](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/#overriding-default-versions) · [Branch settings](https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/)
+
+The build command prepares the browser assets and Worker bundle before Wrangler deploys. Cloudflare runs it on Ubuntu x86-64. The build has a 20-minute timeout on both Workers Free and Workers Paid. A cold build downloads Rust toolchains and compiles dependencies, and Cloudflare's documented build cache does not include Cargo. If the build times out, inspect the build log and use the [manual deployment](#1-get-the-repository-and-build-tools) if needed. [Build image](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/) · [Build limits](https://developers.cloudflare.com/workers/ci-cd/builds/limits-and-pricing/) · [Build caching](https://developers.cloudflare.com/workers/ci-cd/builds/build-caching/)
+
+### Verify the deployment
+
+After saving the connection, push a commit to the production branch. In the Worker's **Deployments** tab, open **View build history** and check that the build for that commit succeeded and produced the active deployment. Check the deployment URL against `ORIGIN` and follow the [health and passkey checks](#5-verify-the-deployment-and-register-your-passkey). For an existing instance with enrolled passkeys, verify sign-in with an existing passkey. Repeat the health and sign-in checks after updates. [Build history and deployments](https://developers.cloudflare.com/workers/ci-cd/builds/#view-build-and-preview-url)
+
+## Deploy manually with Wrangler
+
+### 1. Get the repository and build tools
 
 Run these commands in Bash or Zsh from macOS or Linux. Install Git, curl, Rust through rustup, and Node.js with npm. Use a supported Node.js release at or above 22.12, the minimum for the pinned Wrangler version. A first build needs network access to download dependencies and build tools. [Rust installation](https://rustup.rs/) · [Wrangler installation](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
 
@@ -28,7 +68,7 @@ cargo xtask build
 
 This builds the browser assets and runs Wrangler's deployment dry run locally. A successful dry run bundles both parts of the app. For the native and WebAssembly test suites, run `cargo xtask test`. For the browser and storage smoke tests, install Chrome or Chromium and run `cargo xtask e2e`. Set `KAIROS_CHROME_PATH` if the tests cannot find your browser. [Local test details](../README.md#build-and-test-locally)
 
-## 2. Select the Cloudflare account
+### 2. Select the Cloudflare account
 
 ```sh
 npx --yes wrangler@4.164.0 login
@@ -43,11 +83,11 @@ export CLOUDFLARE_ACCOUNT_ID='paste-the-intended-account-id-here'
 
 In that account's **Workers & Pages** dashboard, check whether a Worker named `kairos` already exists. Deploying under an existing name updates that Worker. For a separate instance, choose an unused `name` at the top of `wrangler.toml` before deployment. [Account selection](https://developers.cloudflare.com/workers/wrangler/system-environment-variables/)
 
-## 3. Set the public hostname
+### 3. Set the public hostname
 
 Choose the HTTPS hostname you will use to open Kairos. Passkeys are tied to the configured relying-party ID, and Kairos checks the browser's exact origin during sign-in and other writes.
 
-### Use `workers.dev`
+#### Use `workers.dev`
 
 Open **Workers & Pages** and read **Your subdomain** in the intended account. If prompted, set up the account's `workers.dev` subdomain. With Worker name `kairos` and account subdomain `example-account`, the URL is `https://kairos.example-account.workers.dev`. [Cloudflare workers.dev setup](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)
 
@@ -59,7 +99,7 @@ RP_ID = "kairos.example-account.workers.dev"
 ORIGIN = "https://kairos.example-account.workers.dev"
 ```
 
-### Use a custom domain
+#### Use a custom domain
 
 Choose an unused hostname in an active Cloudflare DNS zone in the same account. Deploying the route below makes the Worker the origin and lets Cloudflare provision DNS and TLS. [Cloudflare Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
 
@@ -81,7 +121,7 @@ ORIGIN = "https://calendar.example.com"
 
 For either hostname, `RP_ID` takes the hostname alone and `ORIGIN` takes `https://` followed by the hostname, with no trailing slash or path. Deploy the top-level configuration and keep `[env.e2e]` on localhost for tests.
 
-## 4. Deploy with both secrets
+### 4. Deploy with both secrets
 
 Generate a strong random recovery code in your password manager and save it there. The code lets you register replacement passkeys. The command below accepts it without echoing it and generates an independent 32-byte session secret as 64 hex characters. It writes both values to a private temporary JSON file outside the repository and supplies that file to the first upload. Run it from the repository root after checking the account ID and hostname. [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/#upload-secrets-alongside-code)
 
@@ -115,7 +155,7 @@ Generate a strong random recovery code in your password manager and save it ther
 
 Wrangler prints the deployment URL and version ID on success. Check that the URL matches the origin you configured. If the upload fails after the JSON file was created, fix the reported issue and retry with `cargo xtask deploy --secrets-file /path/from/output/secrets.json`, using the actual temporary path. Move the temporary directory to your system Trash as soon as you finish with it. Keep the recovery code in your password manager and share neither the file nor its contents.
 
-## 5. Verify the deployment and register your passkey
+### 5. Verify the deployment and register your passkey
 
 Use the actual origin from `wrangler.toml` in these commands.
 
@@ -135,7 +175,7 @@ curl -fsS "$KAIROS_ORIGIN/auth/state"
 
 ## Update or troubleshoot Kairos
 
-- **Deploy a new revision.** Update your checkout, review any configuration changes, and keep the account, Worker `name`, and `Hub` binding on the existing instance. Preserve the deployment's hostname settings in `wrangler.toml`. After testing, run `cargo xtask deploy` and recheck `/api/health` and passkey sign-in. Cloudflare retains existing secrets on a normal redeploy. [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+- **Deploy a new revision.** Update your checkout, review any configuration changes, and keep the account, Worker `name`, and `Hub` binding on the existing instance. Preserve the deployment's hostname settings in `wrangler.toml`. After testing, push to the connected production branch for Workers Builds, or run `cargo xtask deploy` for a manual deployment. Recheck `/api/health` and passkey sign-in. Cloudflare retains existing secrets on a normal redeploy. [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
 - **Inspect a failed request.** From the repository root, run `npx --yes wrangler@4.164.0 tail --env '' --format pretty` and repeat the request. A health check failure with a Kairos initialization error suggests a missing secret or a malformed session secret. Verify the secret names with `npx --yes wrangler@4.164.0 secret list --env ''`. [Wrangler logs and secrets commands](https://developers.cloudflare.com/workers/wrangler/commands/workers/)
 - **Fix an unreachable hostname.** Compare the configured origin with the deployed URL and inspect **Settings** → **Domains & Routes** for the Worker. For a new custom domain, check that the zone is active, the hostname has no conflicting DNS record, and Cloudflare has issued the certificate. [Custom Domain requirements](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
 - **Fix passkey or recovery errors.** Compare the browser's address with `RP_ID` and `ORIGIN`. Complete the ceremony on the configured origin. When changing domains, update the route and both variables on the same Worker, redeploy, and use the recovery code on `/setup` at the new origin to register a passkey for that hostname.
