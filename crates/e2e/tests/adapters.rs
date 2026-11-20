@@ -9,7 +9,7 @@ use serde_json::json;
 async fn worker_and_sqlite_adapter_lifecycle() {
     let mut worker = WranglerDev::start().await;
     assert_eq!(worker.get("/api/health").await, json!({"ok": true}));
-    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "2");
+    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "3");
 
     let public = worker
         .request(reqwest::Method::POST, "/internal/rearm")
@@ -66,7 +66,7 @@ async fn worker_and_sqlite_adapter_lifecycle() {
         reqwest::StatusCode::INTERNAL_SERVER_ERROR
     );
     worker.restart().await;
-    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "2");
+    assert_eq!(worker.get("/__test/adapter/schema").await["version"], "3");
     assert_eq!(worker.get("/__test/adapter/alarm").await["at"], at);
 
     let mock = MockServer::start().await;
