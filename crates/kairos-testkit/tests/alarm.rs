@@ -100,6 +100,25 @@ async fn watchdog_writes_only_for_a_missing_alarm() {
     );
 }
 
+#[tokio::test]
+async fn watchdog_reports_failure_to_arm_and_can_retry() {
+    let h = TestHub::new();
+    h.alarm.fail_next_set();
+
+    assert_eq!(
+        h.request("POST", "/internal/rearm", None, &[]).await.status,
+        500
+    );
+    assert_eq!(h.alarm_at(), None);
+    assert_eq!(get_meta(&h.db, "last_watchdog_at"), None);
+
+    assert_eq!(watchdog(&h).await.unwrap(), WatchdogAction::Rearmed);
+    assert_eq!(
+        get_meta(&h.db, "last_watchdog_at"),
+        Some(h.now().to_string())
+    );
+}
+
 #[test]
 fn maintenance_purges_only_expired_data() {
     let h = TestHub::new();

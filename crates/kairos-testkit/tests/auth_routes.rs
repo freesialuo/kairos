@@ -89,6 +89,22 @@ async fn fresh_deployment_requires_recovery_for_first_key() {
 }
 
 #[tokio::test]
+async fn recovery_returns_session_cookie_when_alarm_rearm_fails() {
+    let hub = TestHub::new();
+    hub.alarm.fail_next_set();
+
+    let session = recover(&hub).await;
+    assert_eq!(
+        hub.request("GET", "/auth/state", None, &[&session])
+            .await
+            .json()["session"],
+        "recovery",
+    );
+    let error = kairos_core::db::settings::get_meta(&hub.db, "last_alarm_error").unwrap();
+    assert!(error.contains("injected set alarm failure"), "{error}");
+}
+
+#[tokio::test]
 async fn registration_without_session_is_401() {
     let hub = TestHub::new();
     let options = hub

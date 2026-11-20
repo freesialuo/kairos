@@ -131,6 +131,36 @@ async fn manual_series_skip_calendar_and_ics_round_trip() {
         "2026-11-23T09:00:00"
     );
 }
+
+#[tokio::test]
+async fn manual_event_remains_saved_when_alarm_rearm_fails() {
+    let h = TestHub::new();
+    let session = h.admin_session().await;
+    h.faults().fail_sql_matching("SELECT MIN(at) AS earliest");
+
+    let response = send(
+        &h,
+        &session,
+        "POST",
+        "events",
+        Some(json!({"title":"Checkup","start":"2026-11-21T09:00:00","timezone":"UTC"})),
+    )
+    .await;
+    assert_eq!(response.status, 200);
+    let event = send(&h, &session, "GET", "events", None).await.json();
+    assert_eq!(event[0]["id"], response.json()["id"]);
+    assert_eq!(event[0]["event"]["title"], "Checkup");
+    assert_eq!(
+        h.sql("SELECT key FROM reminders WHERE status='pending'")
+            .len(),
+        1
+    );
+
+    let log = send(&h, &session, "GET", "log", None).await.json();
+    let diagnostic = log["background"]["last_alarm_error"].as_str().unwrap();
+    assert!(diagnostic.contains("injected SQL error"), "{diagnostic}");
+}
+
 #[tokio::test]
 async fn source_switch_withdraws_and_calendar_zone_changes_across_dst() {
     let h = TestHub::new();

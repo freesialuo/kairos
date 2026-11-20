@@ -14,7 +14,6 @@ use crate::{
     db::settings::get_settings,
     ics::expand::{ExpandOpts, expand_series},
     ports::Value,
-    sched::alarm::Floor,
     time::zone::utc_to_wall,
 };
 
@@ -107,7 +106,7 @@ async fn put<P: Ports>(hub: &Hub<P>, id: &str, req: &Request) -> Result<Response
             reminders_scheduled,
         })
     })?;
-    hub.rearm(Floor::Http).await?;
+    hub.rearm_after_http().await;
     Ok(Response::json(200, &saved))
 }
 
@@ -126,7 +125,7 @@ async fn delete<P: Ports>(hub: &Hub<P>, id: &str) -> Result<Response, CoreError>
         }
         delete_series(tx, &key, now)
     })?;
-    hub.rearm(Floor::Http).await?;
+    hub.rearm_after_http().await;
     Ok(Response::empty(204))
 }
 

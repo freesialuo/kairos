@@ -68,6 +68,28 @@ async fn put_creates_then_unchanged_put_is_noop() {
 }
 
 #[tokio::test]
+async fn put_and_delete_report_committed_changes_when_alarm_rearm_fails() {
+    let h = TestHub::new();
+    let (_, token) = create_token(&h, "Script").unwrap();
+    let path = "/api/v1/events/checkup";
+    h.alarm.fail_next_set();
+    let response = request(&h, &token, Method::Put, path, utc("2026-11-21T09:00:00Z")).await;
+    let response = body(&response, 200);
+    assert_eq!(response["created"], true);
+    assert_eq!(response["reminders_scheduled"], 1);
+    assert_eq!(
+        h.sql("SELECT id FROM events")[0].i64("id").unwrap(),
+        response["id"].as_i64().unwrap()
+    );
+
+    h.alarm.fail_next_set();
+    let response = request(&h, &token, Method::Delete, path, Value::Null).await;
+    assert_eq!(response.status, 204);
+    assert!(h.sql("SELECT id FROM events").is_empty());
+    assert!(h.sql("SELECT key FROM reminders").is_empty());
+}
+
+#[tokio::test]
 async fn put_is_full_replacement_and_empty_reminders_withdraw() {
     let h = TestHub::new();
     let (_, token) = create_token(&h, "Script").unwrap();

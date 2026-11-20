@@ -14,7 +14,7 @@ use crate::{
     db::settings::get_meta,
     http::{Method, Request, Response, api_v1},
     ports::Value as V,
-    sched::{alarm::Floor, queue::queue_length},
+    sched::queue::queue_length,
 };
 use serde::Serialize;
 use serde_json::{Value as Json, json};
@@ -83,7 +83,7 @@ pub async fn route<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Response, Co
         _ => Err(CoreError::NotFound),
     }?;
     if req.method != Method::Get {
-        hub.rearm(Floor::Http).await?;
+        hub.rearm_after_http().await;
     }
     response
         .headers

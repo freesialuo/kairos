@@ -203,6 +203,25 @@ impl<P: Ports> Hub<P> {
         report
     }
 
+    pub(crate) async fn rearm_after_http(&self) {
+        // The mutation already took effect. Keep its response even if scheduling fails.
+        let error = match AssertUnwindSafe(self.rearm(Floor::Http))
+            .catch_unwind()
+            .await
+        {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.to_string(),
+            Err(panic) => panic_message(panic),
+        };
+        let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            set_meta(
+                &self.db,
+                "last_alarm_error",
+                &format!("HTTP alarm rearm: {error}"),
+            )
+        }));
+    }
+
     pub async fn rearm(&self, floor: Floor) -> Result<(), CoreError> {
         let now = self.now();
         let calculation = std::panic::catch_unwind(AssertUnwindSafe(|| {
