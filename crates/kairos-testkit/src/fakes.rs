@@ -92,12 +92,21 @@ impl Entropy for SeededEntropy {
 pub struct FakeAlarm {
     pub(crate) at: Cell<Option<i64>>,
     pub(crate) calls: Cell<usize>,
+    fail_set: Cell<bool>,
+}
+impl FakeAlarm {
+    pub fn fail_next_set(&self) {
+        self.fail_set.set(true);
+    }
 }
 impl Alarm for FakeAlarm {
     async fn get(&self) -> Result<Option<i64>, CoreError> {
         Ok(self.at.get())
     }
     async fn set(&self, at_ms: i64) -> Result<(), CoreError> {
+        if self.fail_set.replace(false) {
+            return Err(DbError("injected set alarm failure".into()).into());
+        }
         self.at.set(Some(at_ms));
         self.calls.set(self.calls.get() + 1);
         Ok(())

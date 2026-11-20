@@ -53,7 +53,7 @@ pub(crate) async fn route<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Respo
         _ => return Err(CoreError::NotFound),
     };
     if req.method == Method::Post {
-        hub.rearm(crate::sched::alarm::Floor::Http).await?;
+        hub.rearm_after_http().await;
     }
     response
         .headers
