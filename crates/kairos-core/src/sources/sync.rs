@@ -131,6 +131,7 @@ async fn finish_sync<P: Ports>(hub: &Hub<P>, attempt: &Attempt<'_>) -> Result<Sy
                 parse_ics(&response.body, attempt.source_id).map_err(|error| match error {
                     IcsError::NotCalendar => "not a calendar (no VCALENDAR)",
                     IcsError::InvalidUtf8 => "feed is not valid UTF-8",
+                    IcsError::InvalidEvent(reason) => reason,
                 })?,
             )
         };

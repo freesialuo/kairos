@@ -159,6 +159,44 @@ async fn html_200_is_failure_and_keeps_data() {
 }
 
 #[tokio::test]
+async fn unreadable_event_preserves_the_last_good_snapshot() {
+    let h = hub();
+    h.http().respond(FEED, 200, &[("ETag", "previous")], SINGLE);
+    sync_due_source(&h, h.now()).await;
+    drain(&h).await;
+    let events = h.sql("SELECT * FROM events");
+    let reminders = h.sql("SELECT * FROM reminders");
+    assert_eq!((events.len(), reminders.len()), (1, 1));
+
+    for (fields, field) in [
+        ("UID:berlin\nDTSTART:INVALID", "DTSTART"),
+        ("UID:berlin", "DTSTART"),
+        ("DTSTART:20261123T090000Z", "UID"),
+        (
+            "UID:berlin\nRECURRENCE-ID:INVALID\nSTATUS:CANCELLED",
+            "RECURRENCE-ID",
+        ),
+    ] {
+        h.advance_min(30);
+        let body = format!("BEGIN:VCALENDAR\nBEGIN:VEVENT\n{fields}\nEND:VEVENT\nEND:VCALENDAR\n");
+        h.http()
+            .respond(FEED, 200, &[("ETag", "broken")], body.as_bytes());
+        assert_eq!(sync_due_source(&h, h.now()).await.failed, 1);
+        let source = src(&h);
+        assert!(source.last_error.unwrap().contains(field));
+        assert_eq!(source.etag.as_deref(), Some("previous"));
+        assert_eq!(h.sql("SELECT * FROM events"), events);
+        assert_eq!(h.sql("SELECT * FROM reminders"), reminders);
+        assert_eq!(queue_length(&h.db).unwrap(), 0);
+    }
+
+    sync_with(&h, b"BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n").await;
+    drain(&h).await;
+    assert!(h.sql("SELECT * FROM events").is_empty());
+    assert!(h.sql("SELECT * FROM reminders").is_empty());
+}
+
+#[tokio::test]
 async fn oversize_without_content_length_is_failure() {
     let h = hub();
     h.http()
