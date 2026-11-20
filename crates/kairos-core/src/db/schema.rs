@@ -52,6 +52,13 @@ CREATE TABLE api_tokens (
 CREATE TABLE auth_failures (at INTEGER NOT NULL);
 "#,
     "ALTER TABLE events ADD COLUMN initial_start_utc INTEGER;",
+    // The original DTEND is unavailable in stored events. Fetch a full snapshot
+    // on the next regular sync to recalculate zoned durations.
+    "UPDATE sources SET etag = NULL, last_modified = NULL
+     WHERE (etag IS NOT NULL OR last_modified IS NOT NULL) AND EXISTS (
+       SELECT 1 FROM events WHERE source_id = sources.id AND origin = 'ics'
+       AND all_day = 0 AND tzid IS NOT NULL
+     );",
 ];
 
 pub fn migrate(db: &impl Db) -> Result<(), CoreError> {

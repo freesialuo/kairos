@@ -1,6 +1,9 @@
 use futures::FutureExt;
 use kairos_core::{
     Db,
+    calendar::events::{load_series, upsert_event},
+    db::settings::{get_meta, set_meta},
+    http::api_v1::list_calendar,
     ports::Value,
     sched::queue::{process_queue, queue_length},
     sources::{
@@ -85,6 +88,136 @@ async fn first_sync_imports_and_enqueues() {
             .i64("n")
             .unwrap(),
         1
+    );
+}
+
+#[tokio::test]
+async fn sync_uses_exact_end_instants_across_dst() {
+    for (start, end, expected) in [
+        (
+            "TZID=America/New_York:20260308T013000",
+            ";TZID=America/New_York:20260308T033000",
+            [
+                ("2026-03-08T06:30:00Z", "2026-03-08T07:30:00Z"),
+                ("2026-03-09T05:30:00Z", "2026-03-09T06:30:00Z"),
+            ],
+        ),
+        (
+            "TZID=America/New_York:20261101T003000",
+            ";TZID=America/New_York:20261101T023000",
+            [
+                ("2026-11-01T04:30:00Z", "2026-11-01T07:30:00Z"),
+                ("2026-11-02T05:30:00Z", "2026-11-02T08:30:00Z"),
+            ],
+        ),
+        (
+            "TZID=America/New_York:20261101T013000",
+            ";TZID=Europe/London:20261101T063000",
+            [
+                ("2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z"),
+                ("2026-11-02T06:30:00Z", "2026-11-02T07:30:00Z"),
+            ],
+        ),
+        (
+            "TZID=America/New_York:20261101T013000",
+            ":20261101T063000Z",
+            [
+                ("2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z"),
+                ("2026-11-02T06:30:00Z", "2026-11-02T07:30:00Z"),
+            ],
+        ),
+    ] {
+        let h = hub();
+        let feed = format!(
+            "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:dst\nDTSTART;{start}\nDTEND{end}\n\
+             RRULE:FREQ=DAILY;COUNT=2\nEND:VEVENT\nEND:VCALENDAR\n"
+        );
+        assert_eq!(sync_with(&h, feed.as_bytes()).await.events, 1);
+        let expected = expected.map(|(start, end)| (ms(start), ms(end)));
+        let (occurrences, truncated) =
+            list_calendar(&h.hub, expected[0].0, expected[1].1, false).unwrap();
+        assert!(truncated.is_empty());
+        assert_eq!(
+            occurrences
+                .into_iter()
+                .map(|item| (item.occurrence.start_utc, item.occurrence.end_utc))
+                .collect::<Vec<_>>(),
+            expected,
+            "DTSTART;{start} with DTEND {end}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn upgrade_refreshes_zoned_ics_without_discarding_the_last_snapshot() {
+    let h = hub();
+    h.set_now("2026-03-07T00:00:00Z");
+    let feed = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:dst\n\
+        DTSTART;TZID=America/New_York:20260308T013000\n\
+        DTEND;TZID=America/New_York:20260308T033000\nEND:VEVENT\nEND:VCALENDAR\n";
+    let modified = "Fri, 06 Mar 2026 10:00:00 GMT";
+    let validators = [("ETag", "\"v1\""), ("Last-Modified", modified)];
+    h.http().respond(FEED, 200, &validators, feed);
+    sync_due_source(&h, h.now()).await;
+    drain(&h).await;
+    let previous = src(&h);
+    let event = load_series(&h.db, "ics:1:dst").unwrap().remove(0);
+    let mut legacy = event.row;
+    legacy.duration_sec = 7200;
+    upsert_event(&h.db, &legacy, h.now()).unwrap();
+    let reminders = h.sql("SELECT * FROM reminders");
+    assert_eq!(reminders.len(), 1);
+    h.sql(
+        "INSERT INTO sources (id,name,url,color,etag,last_modified) VALUES
+        (2,'Without zoned events','https://feeds.test/other.ics','#aabbcc','other','old')",
+    );
+    let mut floating = legacy.clone();
+    floating.source_id = Some(2);
+    floating.series_key = "ics:2:dst".into();
+    floating.tzid = None;
+    upsert_event(&h.db, &floating, h.now()).unwrap();
+    set_meta(&h.db, "schema_version", "2").unwrap();
+
+    h.migrate().unwrap();
+    assert_eq!(get_meta(&h.db, "schema_version").as_deref(), Some("3"));
+    let migrated = src(&h);
+    assert_eq!(migrated.etag, None);
+    assert_eq!(migrated.last_modified, None);
+    assert_eq!(migrated.last_sync_at, previous.last_sync_at);
+    assert_eq!(migrated.interval_min, previous.interval_min);
+    assert_eq!(migrated.last_result, previous.last_result);
+    let other = get_source(&h.db, 2).unwrap().unwrap();
+    assert_eq!(other.etag.as_deref(), Some("other"));
+    assert_eq!(other.last_modified.as_deref(), Some("old"));
+    assert_eq!(h.sql("SELECT * FROM reminders"), reminders);
+    assert_eq!(load_series(&h.db, "ics:1:dst").unwrap()[0].row, legacy);
+
+    h.advance_min(30);
+    h.http().respond(FEED, 200, &validators, feed);
+    let summary = sync_source(&h, &migrated, h.now()).await.unwrap();
+    assert_eq!(summary.enqueued, 1);
+    assert!(h.http().requests()[1].headers.is_empty());
+    let refreshed = load_series(&h.db, "ics:1:dst").unwrap().remove(0);
+    assert_eq!(refreshed.id, event.id);
+    assert_eq!(refreshed.row.duration_sec, 3600);
+    drain(&h).await;
+    assert_eq!(h.sql("SELECT * FROM reminders"), reminders);
+
+    h.migrate().unwrap();
+    let refreshed = src(&h);
+    assert_eq!(refreshed.etag, previous.etag);
+    assert_eq!(refreshed.last_modified, previous.last_modified);
+    h.http().respond(FEED, 304, &[], &[]);
+    assert!(
+        sync_source(&h, &refreshed, h.now())
+            .await
+            .unwrap()
+            .unchanged
+    );
+    assert_eq!(h.http().requests()[2].headers.len(), 2);
+    assert_eq!(
+        load_series(&h.db, "ics:1:dst").unwrap()[0].row.duration_sec,
+        3600
     );
 }
 

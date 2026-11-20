@@ -32,7 +32,7 @@ async fn migration_creates_all_tables_and_is_idempotent() {
             "sources"
         ]
     );
-    assert_eq!(get_meta(&h.db, "schema_version").as_deref(), Some("2"));
+    assert_eq!(get_meta(&h.db, "schema_version").as_deref(), Some("3"));
 }
 
 #[test]
@@ -44,7 +44,13 @@ fn migration_preserves_v1_event_rows() {
     )
     .unwrap();
     db.exec(
-        "CREATE TABLE events(id INTEGER PRIMARY KEY,title TEXT NOT NULL)",
+        "CREATE TABLE events(id INTEGER PRIMARY KEY,title TEXT NOT NULL,
+         source_id INTEGER,origin TEXT,all_day INTEGER,tzid TEXT)",
+        &[],
+    )
+    .unwrap();
+    db.exec(
+        "CREATE TABLE sources(id INTEGER PRIMARY KEY,etag TEXT,last_modified TEXT)",
         &[],
     )
     .unwrap();
@@ -61,7 +67,7 @@ fn migration_preserves_v1_event_rows() {
         .unwrap();
     assert_eq!(rows[0].text("title").unwrap(), "Existing event");
     assert_eq!(rows[0].opt_i64("initial_start_utc").unwrap(), None);
-    assert_eq!(get_meta(&db, "schema_version").as_deref(), Some("2"));
+    assert_eq!(get_meta(&db, "schema_version").as_deref(), Some("3"));
 }
 #[tokio::test]
 async fn settings_have_spec_defaults() {

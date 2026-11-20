@@ -320,15 +320,28 @@ fn wall_in_zone(property: &Property, raw: &str, target_zone: Option<&str>) -> Op
 }
 
 fn event_duration(properties: &[Property], start: WallValue, zone: Option<&str>) -> i64 {
-    let end = property(properties, "DTEND")
-        .and_then(|end| wall_in_zone(end, end.value.as_deref()?, zone));
-    let width = match (start, end) {
-        (WallValue::Timed(start), Some(WallValue::Timed(end))) => Some(end.duration_since(start)),
-        (WallValue::Date(start), Some(WallValue::Date(end))) => Some(end.duration_since(start)),
-        _ => None,
-    };
-    width
-        .map(|width| width.as_secs())
+    let duration = property(properties, "DTEND").and_then(|end| {
+        let raw = end.value.as_deref()?.trim();
+        let end_wall = parse_ical_wall(end, raw)?;
+        match (start, end_wall, zone) {
+            (WallValue::Timed(start), WallValue::Timed(end_wall), Some(start_zone)) => {
+                // DTEND gives an exact duration for the series. Resolve each endpoint
+                // separately so an end in the second half of a fall-back overlap stays there.
+                let start_at = wall_to_utc(start, start_zone).ok()?;
+                let end_zone = explicit_zone(end, raw).unwrap_or(start_zone);
+                let end_at = wall_to_utc(end_wall, end_zone).ok()?;
+                Some((end_at - start_at) / 1_000)
+            }
+            (WallValue::Timed(start), WallValue::Timed(end), None) => {
+                Some(end.duration_since(start).as_secs())
+            }
+            (WallValue::Date(start), WallValue::Date(end), _) => {
+                Some(end.duration_since(start).as_secs())
+            }
+            _ => None,
+        }
+    });
+    duration
         .or_else(|| value(properties, "DURATION").and_then(duration_seconds))
         .filter(|seconds| *seconds >= 0)
         .unwrap_or(match start {
