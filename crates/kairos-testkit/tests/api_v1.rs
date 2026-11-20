@@ -429,4 +429,14 @@ async fn all_day_occurrences_follow_the_user_zone_and_honor_exdates() {
     assert_eq!(items[0]["start_utc"], ms("2026-11-20T15:00:00Z"));
     assert_eq!(items[1]["start_local"], "2026-11-23");
     assert_eq!(items[1]["all_day"], true);
+
+    let list = request(
+        &h,
+        &token,
+        Method::Get,
+        "/api/v1/events?from=2026-11-22&to=2026-11-23",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(body(&list, 200)["occurrences"], json!([]));
 }

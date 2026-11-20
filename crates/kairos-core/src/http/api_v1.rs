@@ -12,7 +12,7 @@ use crate::{
         reconcile::reconcile_series,
     },
     db::settings::get_settings,
-    ics::expand::{ExpandOpts, expand_series},
+    ics::expand::{ExpandOpts, expand_overlapping_all_day, expand_series},
     ports::Value,
     time::zone::utc_to_wall,
 };
@@ -43,7 +43,9 @@ pub(super) async fn route<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Respo
             let settings = get_settings(&hub.db)?;
             let (from, to) = validate::calendar_range(req, &settings.timezone)?;
             let (rows, truncated) =
-                list_calendar_in_zone(&hub.db, from, to, &settings.timezone, false)?;
+                list_calendar_in_zone(&hub.db, &settings.timezone, false, |series| {
+                    expand_series(series, from, to, &settings.timezone, &ExpandOpts::default())
+                })?;
             Ok(Response::json(
                 200,
                 &ListEventsResponse {
@@ -158,15 +160,27 @@ pub fn list_calendar<P: Ports>(
     include_disabled: bool,
 ) -> Result<(Vec<CalendarOccurrence>, Vec<String>), CoreError> {
     let settings = get_settings(&hub.db)?;
-    list_calendar_in_zone(&hub.db, from, to, &settings.timezone, include_disabled)
+    list_calendar_in_zone(&hub.db, &settings.timezone, include_disabled, |series| {
+        expand_series(series, from, to, &settings.timezone, &ExpandOpts::default())
+    })
 }
 
-fn list_calendar_in_zone(
+pub(super) fn list_calendar_overlaps(
     db: &impl Db,
     from: i64,
     to: i64,
     zone: &str,
+) -> Result<(Vec<CalendarOccurrence>, Vec<String>), CoreError> {
+    list_calendar_in_zone(db, zone, false, |series| {
+        expand_overlapping_all_day(series, from, to, zone)
+    })
+}
+
+fn list_calendar_in_zone(
+    db: &impl Db,
+    zone: &str,
     include_disabled: bool,
+    expand: impl Fn(&[StoredEvent]) -> crate::ics::expand::ExpandResult,
 ) -> Result<(Vec<CalendarOccurrence>, Vec<String>), CoreError> {
     let rows = db.exec(
         "SELECT e.*, s.name AS calendar_source_name, s.color AS calendar_source_color
@@ -193,7 +207,7 @@ fn list_calendar_in_zone(
     let mut items = Vec::new();
     let mut truncated = Vec::new();
     for (key, series) in series {
-        let expanded = expand_series(&series, from, to, zone, &ExpandOpts::default());
+        let expanded = expand(&series);
         if expanded.status != ExpandStatus::Complete {
             truncated.push(key);
         }

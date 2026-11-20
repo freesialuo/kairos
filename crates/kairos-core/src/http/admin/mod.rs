@@ -98,10 +98,20 @@ pub async fn route<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Response, Co
 fn calendar<P: Ports>(hub: &Hub<P>, req: &Request) -> Result<Response, CoreError> {
     let timezone = crate::db::settings::get_settings(&hub.db)?.timezone;
     let (from, to) = crate::http::validate::calendar_range(req, &timezone)?;
-    let (occs, truncated) = api_v1::list_calendar(hub, from, to, false)?;
+    let (occs, truncated) = api_v1::list_calendar_overlaps(&hub.db, from, to, &timezone)?;
+    let earlier_starts: Vec<_> = occs
+        .iter()
+        .map(|entry| entry.occurrence.start_utc)
+        .filter(|&start| start < from)
+        .collect();
     let reminders = hub.db.exec(
-        "SELECT key,fire_at,status FROM reminders WHERE occ_start_utc>=?1 AND occ_start_utc<?2",
-        &[V::Integer(from), V::Integer(to)],
+        "SELECT key,fire_at,status FROM reminders WHERE occ_start_utc<?2
+          AND (occ_start_utc>=?1 OR occ_start_utc IN (SELECT value FROM json_each(?3)))",
+        &[
+            V::Integer(from),
+            V::Integer(to),
+            V::Text(json!(earlier_starts).to_string()),
+        ],
     )?;
     let mut groups = std::collections::HashMap::<String, Vec<Json>>::new();
     for row in reminders {
