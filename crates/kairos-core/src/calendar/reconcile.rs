@@ -1,20 +1,17 @@
 use std::collections::HashMap;
 
-use jiff::{Span, Timestamp};
-
 use super::{
     events::load_series,
-    model::{EventRow, ExpandStatus},
+    model::ExpandStatus,
     plan::{PlannedReminder, plan_reminders, resolve_leads},
 };
 use crate::{
     CoreError, Db,
     db::settings::get_settings,
-    ics::expand::{ANCHOR_LAG_MS, ExpandOpts, expand_with_event_windows},
+    ics::expand::{ANCHOR_LAG_MS, ExpandOpts, all_day_start_floor, expand_with_event_windows},
     ports::Value,
     sched::{dispatch::STARTED_GRACE_MS, queue::enqueue_series},
     sources::model::get_source,
-    time::zone::{utc_to_wall, wall_to_utc},
 };
 
 pub(crate) const WINDOW_MS: i64 = 60 * 86_400_000;
@@ -46,7 +43,11 @@ pub fn reconcile_series(db: &impl Db, key: &str, now: i64) -> Result<ReconcileOu
         &settings.timezone,
         ExpandOpts::default().budget,
         |row, zone| {
-            let start = planning_start(&row.row, zone, now);
+            let start = if row.row.all_day {
+                all_day_start_floor(&row.row, zone, now)
+            } else {
+                now.saturating_sub(STARTED_GRACE_MS)
+            };
             (start..horizon, Some(anchor_cutoff.min(start)))
         },
     );
@@ -98,21 +99,6 @@ pub fn reconcile_series(db: &impl Db, key: &str, now: i64) -> Result<ReconcileOu
         enqueue_series(db, key, "catch_up", now)?;
     }
     Ok(ReconcileOutcome::Done(result.status))
-}
-
-fn planning_start(event: &EventRow, zone: &str, now: i64) -> i64 {
-    if !event.all_day {
-        return now.saturating_sub(STARTED_GRACE_MS);
-    }
-    // An active all-day occurrence can start before today. Step back in civil
-    // days so a daylight-saving transition cannot exclude its start.
-    let earliest = || {
-        let today = utc_to_wall(now, zone).ok()?.date();
-        let duration = Span::new().try_days(event.duration_sec / 86_400).ok()?;
-        let day = today.checked_sub(duration).ok()?;
-        wall_to_utc(day.at(0, 0, 0, 0), zone).ok()
-    };
-    earliest().unwrap_or(Timestamp::MIN.as_millisecond())
 }
 
 fn apply_plan(

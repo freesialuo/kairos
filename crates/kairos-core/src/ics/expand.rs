@@ -7,7 +7,7 @@ use jiff::{SignedDuration, Span, Timestamp, civil::DateTime, tz::TimeZone};
 use rrule::{RRule, RRuleSet, Tz, Unvalidated};
 
 use crate::{
-    calendar::model::{Anchor, ExpandStatus, Occurrence, StoredEvent},
+    calendar::model::{Anchor, EventRow, ExpandStatus, Occurrence, StoredEvent},
     time::zone::{WallValue, format_wall, parse_wall, utc_to_wall, wall_to_utc},
 };
 
@@ -65,6 +65,42 @@ pub fn expand_series(
     expand_with_event_windows(rows, user_tz, opts.budget, |_, _| {
         (from_utc..to_utc, opts.anchor_before_utc)
     })
+}
+
+pub(crate) fn all_day_start_floor(event: &EventRow, zone: &str, from: i64) -> i64 {
+    // Step back in civil days so a daylight-saving transition cannot exclude an earlier start.
+    let earliest = || {
+        let today = utc_to_wall(from, zone).ok()?.date();
+        let duration = Span::new().try_days(event.duration_sec / 86_400).ok()?;
+        let day = today.checked_sub(duration).ok()?;
+        wall_to_utc(day.at(0, 0, 0, 0), zone).ok()
+    };
+    earliest().unwrap_or(Timestamp::MIN.as_millisecond())
+}
+
+pub(crate) fn expand_overlapping_all_day(
+    rows: &[StoredEvent],
+    from: i64,
+    to: i64,
+    user_tz: &str,
+) -> ExpandResult {
+    let mut result = expand_with_event_windows(
+        rows,
+        user_tz,
+        ExpandOpts::default().budget,
+        |event, zone| {
+            let start = if event.row.all_day {
+                all_day_start_floor(&event.row, zone, from).min(from)
+            } else {
+                from
+            };
+            (start..to, None)
+        },
+    );
+    result
+        .occurrences
+        .retain(|occ| occ.start_utc >= from || (occ.all_day && occ.end_utc > from));
+    result
 }
 
 pub(crate) fn expand_with_event_windows(
@@ -445,7 +481,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
-    use crate::calendar::model::{EventRow, Origin};
+    use crate::calendar::model::Origin;
 
     fn ms(iso: &str) -> i64 {
         iso.parse::<Timestamp>().unwrap().as_millisecond()

@@ -6,7 +6,7 @@ use kairos_core::{
     ports::Value,
     sched::queue::process_queue,
 };
-use kairos_testkit::TestHub;
+use kairos_testkit::{TestHub, ms};
 use serde_json::{Value as Json, json};
 
 async fn send(
@@ -159,6 +159,132 @@ async fn manual_event_remains_saved_when_alarm_rearm_fails() {
     let log = send(&h, &session, "GET", "log", None).await.json();
     let diagnostic = log["background"]["last_alarm_error"].as_str().unwrap();
     assert!(diagnostic.contains("injected SQL error"), "{diagnostic}");
+}
+
+#[tokio::test]
+async fn calendar_returns_ongoing_all_day_events_and_their_reminders() {
+    let h = TestHub::new();
+    let c = h.admin_session().await;
+    let retreat = send(
+        &h,
+        &c,
+        "POST",
+        "events",
+        Some(json!({
+            "title": "Retreat", "start": "2026-11-20", "end": "2026-11-26",
+            "location": "Cabin", "all_day": true, "reminders": "default"
+        })),
+    )
+    .await;
+    assert_eq!(retreat.status, 200, "{:?}", retreat.json());
+    let id = retreat.json()["id"].as_i64().unwrap();
+    for input in [
+        json!({
+            "title": "Ended at the boundary", "start": "2026-11-20", "end": "2026-11-22", "all_day": true,
+            "reminders": "none"
+        }),
+        json!({
+            "title": "Timed event started earlier", "start": "2026-11-20T21:00:00",
+            "end": "2026-11-27T21:00:00", "reminders": "none"
+        }),
+        json!({
+            "title": "Starts at the upper boundary", "start": "2026-11-30", "all_day": true,
+            "reminders": "none"
+        }),
+    ] {
+        let event = send(&h, &c, "POST", "events", Some(input)).await;
+        assert_eq!(event.status, 200, "{:?}", event.json());
+    }
+    h.sql("UPDATE reminders SET status='sent' WHERE status='pending'");
+    h.set_now("2026-11-23T08:00:00Z");
+
+    let calendar = send(
+        &h,
+        &c,
+        "GET",
+        "calendar?from=2026-11-22T00:00:00Z&to=2026-11-30T00:00:00Z",
+        None,
+    )
+    .await;
+    assert_eq!(calendar.status, 200);
+    let body = calendar.json();
+    assert_eq!(body["truncated"], json!([]));
+    let items = body["occurrences"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    let retreat = &items[0];
+    assert_eq!(retreat["event_id"], id);
+    assert_eq!(retreat["title"], "Retreat");
+    assert_eq!(retreat["location"], "Cabin");
+    assert_eq!(retreat["all_day"], true);
+    assert_eq!(retreat["editable"], true);
+    assert_eq!(retreat["slot"], "single");
+    assert_eq!(retreat["start_local"], "2026-11-20");
+    assert_eq!(retreat["end_local"], "2026-11-26");
+    assert_eq!(
+        retreat["reminders"],
+        json!([{
+            "key": format!("{}|allday", retreat["occ_key"].as_str().unwrap()),
+            "status": "sent", "fire_at": ms("2026-11-20T09:00:00Z")
+        }])
+    );
+}
+
+#[tokio::test]
+async fn calendar_includes_recurring_all_day_parents_and_overrides_across_dst() {
+    let h = TestHub::new();
+    let c = h.admin_session().await;
+    let mut settings = get_settings(&h.db).unwrap();
+    settings.timezone = "America/New_York".into();
+    put_settings(&h.db, &settings).unwrap();
+    let source = send(
+        &h,
+        &c,
+        "POST",
+        "sources",
+        Some(json!({"name": "Classes", "url": "https://feeds.test/work"})),
+    )
+    .await
+    .json()["id"]
+        .as_i64()
+        .unwrap();
+    let feed = b"BEGIN:VCALENDAR\r\n\
+        BEGIN:VEVENT\r\nUID:work\r\nSUMMARY:Course\r\n\
+        DTSTART;VALUE=DATE:20261031\r\nDTEND;VALUE=DATE:20261103\r\n\
+        RRULE:FREQ=WEEKLY;COUNT=3\r\nEXDATE;VALUE=DATE:20261114\r\nEND:VEVENT\r\n\
+        BEGIN:VEVENT\r\nUID:work\r\nRECURRENCE-ID;VALUE=DATE:20261107\r\n\
+        SUMMARY:Moved course\r\nDTSTART;VALUE=DATE:20261030\r\n\
+        DTEND;VALUE=DATE:20261104\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    let rows = parse_ics(feed, source).unwrap().rows;
+    let ids = rows
+        .iter()
+        .map(|row| upsert_event(&h.db, row, h.now()).unwrap().id)
+        .collect::<Vec<_>>();
+
+    let calendar = send(
+        &h,
+        &c,
+        "GET",
+        "calendar?from=2026-11-03T04:30:00Z&to=2026-11-15T00:00:00Z",
+        None,
+    )
+    .await;
+    assert_eq!(calendar.status, 200);
+    let body = calendar.json();
+    let items = body["occurrences"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let moved = &items[0];
+    assert_eq!(moved["event_id"], ids[1]);
+    assert_eq!(moved["slot"], "2026-11-07");
+    assert_eq!(moved["title"], "Moved course");
+    assert_eq!(moved["source"], "Classes");
+    assert_eq!(moved["start_utc"], ms("2026-10-30T04:00:00Z"));
+    assert_eq!(moved["end_utc"], ms("2026-11-04T05:00:00Z"));
+    let parent = &items[1];
+    assert_eq!(parent["event_id"], ids[0]);
+    assert_eq!(parent["slot"], "2026-10-31");
+    assert_eq!(parent["title"], "Course");
+    assert_eq!(parent["start_utc"], ms("2026-10-31T04:00:00Z"));
+    assert_eq!(parent["end_utc"], ms("2026-11-03T05:00:00Z"));
 }
 
 #[tokio::test]
