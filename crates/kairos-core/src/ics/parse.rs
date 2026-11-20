@@ -24,6 +24,7 @@ pub struct ParsedFeed {
 pub enum IcsError {
     NotCalendar,
     InvalidUtf8,
+    InvalidEvent(&'static str),
 }
 
 pub fn parse_ics(bytes: &[u8], source_id: i64) -> Result<ParsedFeed, IcsError> {
@@ -61,20 +62,22 @@ pub fn parse_ics(bytes: &[u8], source_id: i64) -> Result<ParsedFeed, IcsError> {
     let mut cancelled_slots = HashMap::<&str, BTreeSet<String>>::new();
     for event in &events {
         let properties = &event.properties;
-        let Some(uid) = value(properties, "UID") else {
-            continue;
-        };
+        let uid = value(properties, "UID")
+            .filter(|uid| !uid.trim().is_empty())
+            .ok_or(IcsError::InvalidEvent("missing event UID"))?;
         let master = masters.get(uid);
         if master.is_some_and(|master| master.cancelled) {
             continue;
         }
         let recurrence_id = match property(properties, "RECURRENCE-ID") {
             Some(recurrence) => {
-                let Some(slot) = recurrence.value.as_deref().and_then(|raw| {
-                    wall_in_zone(recurrence, raw, master.and_then(|master| master.zone))
-                }) else {
-                    continue;
-                };
+                let slot = recurrence
+                    .value
+                    .as_deref()
+                    .and_then(|raw| {
+                        wall_in_zone(recurrence, raw, master.and_then(|master| master.zone))
+                    })
+                    .ok_or(IcsError::InvalidEvent("invalid event RECURRENCE-ID"))?;
                 Some(format_wall(&slot))
             }
             None => None,
@@ -85,9 +88,9 @@ pub fn parse_ics(bytes: &[u8], source_id: i64) -> Result<ParsedFeed, IcsError> {
             {
                 cancelled_slots.entry(uid).or_default().insert(slot);
             }
-        } else if let Some(row) =
-            parse_event(event, source_id, uid, recurrence_id, &mut parsed.warnings)
-        {
+        } else {
+            let row = parse_event(event, source_id, uid, recurrence_id, &mut parsed.warnings)
+                .ok_or(IcsError::InvalidEvent("missing or invalid event DTSTART"))?;
             parsed.rows.push(row);
         }
     }
